@@ -137,6 +137,12 @@ TRK1 (pies) ── LoRa, zero-hop ──► BAZA2 (kieszeń/plecak) ── Bluet
            ◄── polecenia #C ─────                      ◄── wpisujesz #SZUKAJ, #DOM ... ──
 ```
 
+Na Androidzie zamiast aplikacji MeshCore można użyć **[aplikacji „Tracker psa”](app/)** w Chrome
+(<https://qbart.waw.pl/tracker/>): radar z psem względem telefonu (GPS i kompas telefonu – odległość i kierunek
+działają nawet wtedy, gdy baza nie ma GPS), przyciski zamiast wpisywania poleceń, alarm z dźwiękiem i wibracją.
+Po pierwszym otwarciu działa bez internetu. Telefon łączy się przez Bluetooth z jedną aplikacją naraz – albo ta
+strona, albo aplikacja MeshCore.
+
 ### Przygotowanie (raz, w domu)
 
 1. Wgraj firmware: tracker – `t1000e_tracker`, baza polowa – `Xiao_nrf52_tracker_base` (zob. niżej).

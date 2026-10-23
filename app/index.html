@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16181d">
+<title>Tracker psa</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="title">Tracker psa</div>
+  <button id="btn-connect" class="pill" type="button">Połącz z bazą</button>
+</header>
+<div id="ble-status" class="status">Nie połączono. Włącz bazę polową i dotknij „Połącz z bazą”.</div>
+
+<div id="alarm" class="alarm" hidden>
+  <div id="alarm-text">Brak meldunku</div>
+  <button id="btn-alarm-ok" type="button">OK</button>
+</div>
+
+<main>
+  <section class="radar-card">
+    <canvas id="radar" aria-label="Radar: pies względem telefonu"></canvas>
+    <div class="radar-info">
+      <div id="dist" class="dist">–</div>
+      <div id="dir" class="dir">brak pozycji</div>
+      <div id="age" class="age">czekam na meldunek</div>
+    </div>
+    <div class="radar-tools">
+      <button id="btn-orient" class="chip" type="button">Północ u góry</button>
+      <button id="btn-wake" class="chip" type="button">Ekran: zwykły</button>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="stat"><span class="k">Bateria psa</span><span id="s-batt" class="v">–</span></div>
+    <div class="stat"><span class="k">GPS psa</span><span id="s-gps" class="v">–</span></div>
+    <div class="stat"><span class="k">Meldunek co</span><span id="s-int" class="v">–</span></div>
+    <div class="stat"><span class="k">Następny za</span><span id="s-next" class="v">–</span></div>
+  </section>
+
+  <section class="cmds">
+    <button class="cmd big search" data-cmd="#SZUKAJ" type="button">Szukaj<small>meldunek co 30 s</small></button>
+    <button class="cmd big found" data-cmd="#STOP" type="button">Znaleziony<small>koniec szukania</small></button>
+    <button class="cmd" data-cmd="#CO 60" type="button">Co 1 min</button>
+    <button class="cmd" data-cmd="#CO 120" type="button">Co 2 min</button>
+    <button class="cmd" data-cmd="#CO 300" type="button">Co 5 min</button>
+    <button class="cmd" data-cmd="#BT" type="button">Bluetooth psa<small>10 min</small></button>
+    <button class="cmd home" data-cmd="#DOM" data-confirm="Zakończyć wędrówkę? Tracker wróci do bazy domowej." type="button">Koniec wędrówki</button>
+  </section>
+  <div id="cmd-status" class="cmd-status">Polecenie dojdzie do psa przy jego najbliższym meldunku.</div>
+
+  <section class="maps">
+    <a id="map-google" class="mapbtn" href="#" target="_blank" rel="noopener">Mapy Google</a>
+    <a id="map-geo" class="mapbtn" href="#">Inna mapa</a>
+    <a id="map-nav" class="mapbtn" href="#">Prowadź pieszo</a>
+  </section>
+
+  <section class="log">
+    <h2>Meldunki</h2>
+    <ol id="log"></ol>
+  </section>
+
+  <details class="settings">
+    <summary>Ustawienia</summary>
+    <label>Tracker (kontakt)
+      <select id="sel-tracker"><option value="">– wybierz po połączeniu –</option></select>
+    </label>
+    <label class="row"><input id="chk-sound" type="checkbox" checked> Dźwięk i wibracja alarmu</label>
+    <button id="btn-notif" type="button">Zezwól na powiadomienia</button>
+    <button id="btn-clear" type="button">Wyczyść ślad i meldunki</button>
+    <p class="hint">Telefon może być połączony przez Bluetooth tylko z jedną aplikacją: na czas korzystania
+      z tej strony rozłącz aplikację MeshCore. Strona działa bez internetu po pierwszym otwarciu
+      (menu Chrome → „Dodaj do ekranu głównego”). Mapy Google i OsmAnd działają offline, jeśli pobrałeś
+      wcześniej mapę obszaru.</p>
+    <p class="hint" id="ver"></p>
+  </details>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
