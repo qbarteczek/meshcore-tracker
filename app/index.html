@@ -7,7 +7,7 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
 <header class="bar">
@@ -71,6 +71,9 @@
     <label>Tracker (kontakt)
       <select id="sel-tracker"><option value="">– wybierz po połączeniu –</option></select>
     </label>
+    <label>Język
+      <select id="sel-lang"></select>
+    </label>
     <label class="row"><input id="chk-sound" type="checkbox" checked> Dźwięk i wibracja alarmu</label>
     <button id="btn-notif" type="button">Zezwól na powiadomienia</button>
     <button id="btn-clear" type="button">Wyczyść ślad i meldunki</button>
@@ -83,6 +86,7 @@
     <p class="hint" id="ver"></p>
   </details>
 </main>
-<script src="app.js?v=5"></script>
+<script src="lang.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

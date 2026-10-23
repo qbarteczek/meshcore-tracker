@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-5';
+const VERSION = 'trk2-app-6';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -42,7 +42,7 @@ const S = {
 
 async function connect() {
   if (!navigator.bluetooth) {
-    status('Ta przeglądarka nie obsługuje Bluetooth. Użyj Chrome na Androidzie.');
+    status(t('Ta przeglądarka nie obsługuje Bluetooth. Użyj Chrome na Androidzie.'));
     return;
   }
   try {
@@ -55,13 +55,13 @@ async function connect() {
     S.wantConnected = true;
     await openGatt();
   } catch (e) {
-    if (e && e.name === 'NotFoundError') status('Nie wybrano urządzenia.');
-    else status('Nie udało się połączyć: ' + (e && e.message ? e.message : e));
+    if (e && e.name === 'NotFoundError') status(t('Nie wybrano urządzenia.'));
+    else status(t('Nie udało się połączyć:') + ' ' + (e && e.message ? e.message : e));
   }
 }
 
 async function openGatt() {
-  status('Łączenie z ' + S.device.name + '…');
+  status(tf('Łączenie z {name}…', { name: S.device.name }));
   const server = await S.device.gatt.connect();
   const svc = await server.getPrimaryService(UART);
   S.rx = await svc.getCharacteristic(UART_RX);
@@ -87,7 +87,7 @@ function onDisconnected() {
   S.rx = null;
   updateConnUI();
   if (!S.wantConnected) return;
-  status('Rozłączono z bazą – ponawiam połączenie…');
+  status(t('Rozłączono z bazą – ponawiam połączenie…'));
   setTimeout(async function retry() {
     if (!S.wantConnected || S.connected) return;
     try { await openGatt(); } catch { setTimeout(retry, 5000); }
@@ -126,7 +126,7 @@ function onFrame(b) {
   switch (code) {
     case RESP.SELF_INFO:
       S.baseName = cstr(b.subarray(58));
-      status('Połączono z bazą ' + S.baseName + '.');
+      status(tf('Połączono z bazą {name}.', { name: S.baseName }));
       break;
     case RESP.CONTACT: {
       const prefix = hex(b.subarray(1, 7));
@@ -153,12 +153,12 @@ function onFrame(b) {
     case RESP.SENT:
       if (S.pendingCmd && S.pendingCmd.ack === null) {
         S.pendingCmd.ack = rdU32(b, 2);
-        cmdStatus('Polecenie „' + S.pendingCmd.text + '” czeka w bazie na meldunek psa.');
+        cmdStatus(tf('Polecenie „{c}” czeka w bazie na meldunek psa.', { c: S.pendingCmd.text }));
       }
       break;
     case PUSH.SEND_CONFIRMED:
       if (S.pendingCmd && S.pendingCmd.ack === rdU32(b, 1)) {
-        cmdStatus('Pies przyjął polecenie „' + S.pendingCmd.text + '”.');
+        cmdStatus(tf('Pies przyjął polecenie „{c}”.', { c: S.pendingCmd.text }));
         if (S.pendingCmd.button) S.pendingCmd.button.classList.remove('pending');
         S.pendingCmd = null;
         if (navigator.vibrate) navigator.vibrate(60);
@@ -166,7 +166,7 @@ function onFrame(b) {
       break;
     case RESP.ERR:
       if (S.pendingCmd && S.pendingCmd.ack === null) {
-        cmdStatus('Baza odrzuciła polecenie (kod ' + b[1] + ').');
+        cmdStatus(tf('Baza odrzuciła polecenie (kod {c}).', { c: b[1] }));
         if (S.pendingCmd.button) S.pendingCmd.button.classList.remove('pending');
         S.pendingCmd = null;
       }
@@ -229,8 +229,8 @@ function lastFix() {
 
 function sendCommand(text, button) {
   if (!S.connected || !S.tracker) {
-    cmdStatus(S.connected ? 'Najpierw musi przyjść meldunek od psa (albo wybierz tracker w ustawieniach).'
-      : 'Najpierw połącz się z bazą.');
+    cmdStatus(S.connected ? t('Najpierw musi przyjść meldunek od psa (albo wybierz tracker w ustawieniach).')
+      : t('Najpierw połącz się z bazą.'));
     return;
   }
   if (S.pendingCmd && S.pendingCmd.button) S.pendingCmd.button.classList.remove('pending');
@@ -239,7 +239,7 @@ function sendCommand(text, button) {
   const pre = S.tracker.match(/../g).map((h) => parseInt(h, 16));
   const ts = Math.floor(Date.now() / 1000);
   send([CMD.SEND_TXT, 0, 0, ...u32(ts), ...pre, ...enc.encode(text)]);
-  cmdStatus('Wysyłanie „' + text + '” do bazy…');
+  cmdStatus(tf('Wysyłanie „{c}” do bazy…', { c: text }));
 }
 
 // ------------------------------------------------------------------ geografia
@@ -256,13 +256,14 @@ function bearing(a, b, c, d) {
   return (Math.atan2(y, x) / K + 360) % 360;
 }
 const DIRS = ['północ', 'pn.-wsch.', 'wschód', 'pd.-wsch.', 'południe', 'pd.-zach.', 'zachód', 'pn.-zach.'];
-const fmtDist = (m) => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 1 : 0).replace('.', ',') + ' km';
-function ago(t) {
-  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (s < 60) return s + ' s temu';
-  if (s < 3600) return Math.floor(s / 60) + ' min temu';
-  return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min temu';
+const fmtDist = (m) => m < 1000 ? Math.round(m) + ' m' : num(m / 1000, m < 10000 ? 1 : 0) + ' km';
+function dur(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + ' s';
+  if (s < 3600) return Math.floor(s / 60) + ' min';
+  return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
 }
+function ago(ts) { return tf('{d} temu', { d: dur(Date.now() - ts) }); }
 
 // ------------------------------------------------------------------ GPS i kompas telefonu
 
@@ -277,7 +278,7 @@ function startSensors() {
         store.set('mytrail', S.myTrail);
       }
       render();
-    }, (e) => status('GPS telefonu: ' + e.message), { enableHighAccuracy: true, maximumAge: 5000 });
+    }, (e) => status(t('GPS telefonu:') + ' ' + e.message), { enableHighAccuracy: true, maximumAge: 5000 });
   }
   const onOri = (e) => {
     if (e.absolute === false && e.type !== 'deviceorientationabsolute') return;
@@ -296,25 +297,25 @@ function render() {
   if (fix && S.me) {
     const d = distM(S.me.lat, S.me.lon, fix.lat, fix.lon), br = bearing(S.me.lat, S.me.lon, fix.lat, fix.lon);
     $('dist').textContent = fmtDist(d);
-    $('dir').textContent = d < 10 ? 'tuż obok' : DIRS[Math.round(br / 45) % 8] + ' · ' + Math.round(br) + '°';
+    $('dir').textContent = d < 10 ? t('tuż obok') : t(DIRS[Math.round(br / 45) % 8]) + ' · ' + Math.round(br) + '°';
   } else if (fix) {
     $('dist').textContent = '–';
-    $('dir').textContent = S.me ? '' : 'czekam na GPS telefonu';
+    $('dir').textContent = S.me ? '' : t('czekam na GPS telefonu');
   } else {
     $('dist').textContent = '–';
-    $('dir').textContent = rep ? 'pies bez fixu GPS' : 'brak pozycji';
+    $('dir').textContent = rep ? t('pies bez fixu GPS') : t('brak pozycji');
   }
   if (rep) {
     const late = rep.int && Date.now() - rep.t > (2 * rep.int + 60) * 1000;
-    $('age').textContent = 'meldunek ' + ago(rep.t) + (fix && fix !== rep ? ' · pozycja ' + ago(fix.t) : '');
+    $('age').textContent = tf('meldunek {a}', { a: ago(rep.t) }) + (fix && fix !== rep ? ' · ' + tf('pozycja {a}', { a: ago(fix.t) }) : '');
     $('age').classList.toggle('old', !!late);
-    $('s-batt').textContent = rep.mv ? (rep.mv / 1000).toFixed(2).replace('.', ',') + ' V · ' + rep.pct + '%' : '–';
-    $('s-gps').textContent = rep.fix ? rep.sats + ' sat' : 'brak fixu';
-    $('s-int').textContent = rep.int ? (rep.int < 120 ? rep.int + ' s' : Math.round(rep.int / 60) + ' min') + (rep.search ? ' · szukanie' : '') : '–';
+    $('s-batt').textContent = rep.mv ? num(rep.mv / 1000, 2) + ' V · ' + rep.pct + '%' : '–';
+    $('s-gps').textContent = rep.fix ? rep.sats + ' sat' : t('brak fixu');
+    $('s-int').textContent = rep.int ? (rep.int < 120 ? rep.int + ' s' : Math.round(rep.int / 60) + ' min') + (rep.search ? ' · ' + t('szukanie') : '') : '–';
     if (rep.int) {
       const left = Math.round((rep.t + rep.int * 1000 - Date.now()) / 1000);
       $('s-next').textContent = left > 0 ? (left < 120 ? left + ' s' : Math.round(left / 60) + ' min')
-        : left > -60 - rep.int ? 'zaraz' : 'spóźniony ' + ago(rep.t + rep.int * 1000).replace(' temu', '');
+        : left > -60 - rep.int ? t('zaraz') : tf('spóźniony {d}', { d: dur(-left * 1000) });
     }
   }
   // linki do map
@@ -375,7 +376,7 @@ function drawRadar() {
   g.fillText('N', nx, ny + 5);
   if (!centre) {
     g.fillStyle = col('--muted'); g.font = '14px system-ui, sans-serif';
-    g.fillText('czekam na pozycję', c, c + 5);
+    g.fillText(t('czekam na pozycję'), c, c + 5);
     return;
   }
   // mój ślad
@@ -423,7 +424,7 @@ function showAlarm(text) {
   if (S.alarmMuted > Date.now()) return;
   if (S.sound) { beep(); if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); }
   if (!S.alarmShown && 'Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
-    navigator.serviceWorker.ready.then((r) => r.showNotification('Tracker psa', { body: text, tag: 'alarm', renotify: true })).catch(() => {});
+    navigator.serviceWorker.ready.then((r) => r.showNotification(t('Tracker psa'), { body: text, tag: 'alarm', renotify: true })).catch(() => {});
   }
   S.alarmShown = true;
 }
@@ -437,7 +438,7 @@ function checkLate() {
     const mins = Math.round((Date.now() - rep.t) / 60000);
     if ($('alarm').hidden || (Math.floor(late / 60000) !== S.lastLateMin)) {
       S.lastLateMin = Math.floor(late / 60000);
-      showAlarm('Brak meldunku od ' + mins + ' min' + (S.connected ? '' : ' (baza rozłączona!)'));
+      showAlarm(tf('Brak meldunku od {n} min', { n: mins }) + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
     }
   }
 }
@@ -449,16 +450,16 @@ function cmdStatus(t) { $('cmd-status').textContent = t; }
 
 function updateConnUI() {
   const b = $('btn-connect');
-  b.textContent = S.connected ? 'Połączono' : 'Połącz z bazą';
+  b.textContent = S.connected ? t('Połączono') : t('Połącz z bazą');
   b.classList.toggle('on', S.connected);
-  if (!S.connected && !S.wantConnected) status('Nie połączono.');
+  if (!S.connected && !S.wantConnected) status(t('Nie połączono.'));
 }
 
 function addLog(t, text, warn) {
   const li = document.createElement('li');
   if (warn) li.className = 'warn';
   const tm = document.createElement('time');
-  tm.textContent = new Date(t).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  tm.textContent = new Date(t).toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
   li.append(tm, document.createTextNode(text));
   $('log').prepend(li);
   while ($('log').children.length > 60) $('log').lastChild.remove();
@@ -467,7 +468,7 @@ function addLog(t, text, warn) {
 function fillTrackerSelect() {
   const sel = $('sel-tracker');
   sel.textContent = '';
-  const none = new Option('– wybierz –', '');
+  const none = new Option(t('– wybierz –'), '');
   sel.add(none);
   for (const [p, c] of S.contacts) sel.add(new Option(c.name || p, p, false, p === S.tracker));
   if (S.tracker && !S.contacts.has(S.tracker)) sel.add(new Option('tracker ' + S.tracker, S.tracker, false, true));
@@ -475,13 +476,14 @@ function fillTrackerSelect() {
 
 async function toggleWake() {
   try {
-    if (S.wake) { await S.wake.release(); S.wake = null; }
+    if (S.wake) { S.wakeWanted = false; await S.wake.release(); S.wake = null; }
     else if ('wakeLock' in navigator) {
       S.wake = await navigator.wakeLock.request('screen');
-      S.wake.addEventListener('release', () => { S.wake = null; $('btn-wake').textContent = 'Ekran: zwykły'; });
+      S.wakeWanted = true;
+      S.wake.addEventListener('release', () => { S.wake = null; $('btn-wake').textContent = t('Ekran: zwykły'); });
     }
   } catch { /* np. oszczędzanie baterii */ }
-  $('btn-wake').textContent = S.wake ? 'Ekran: zawsze włączony' : 'Ekran: zwykły';
+  $('btn-wake').textContent = S.wake ? t('Ekran: zawsze włączony') : t('Ekran: zwykły');
 }
 
 // pokaz bez urządzeń: index.html#demo (nic nie zapisuje)
@@ -496,19 +498,26 @@ function demo() {
       search: false, text: fmtDist(distM(lat0, lon0, lat, lon)) + ' · 4,05 V 84% · 14°C · 9 sat · co 60 s' };
   });
   S.myTrail = Array.from({ length: 20 }, (_, i) => [lat0 - 0.0002 * (20 - i), lon0 - 0.0003 * (20 - i), now]);
-  status('Pokaz (dane przykładowe).');
+  status(t('Pokaz (dane przykładowe).'));
 }
 
 function init() {
-  $('ver').textContent = 'Wersja ' + VERSION + ' · kod: github.com/qbarteczek/meshcore-tracker';
-  $('btn-connect').addEventListener('click', () => (S.connected ? (confirm('Rozłączyć z bazą?') && disconnect()) : connect()));
+  applyLang(document.body);
+  const sl = $('sel-lang');
+  for (const l of LANGS) sl.add(new Option(LANG_NAMES[l], l, false, l === LANG));
+  sl.addEventListener('change', () => {
+    try { localStorage.setItem('qbart.lang', sl.value); } catch { /* */ }
+    location.href = location.pathname + '?lang=' + sl.value + location.hash;
+  });
+  $('ver').textContent = t('Wersja') + ' ' + VERSION + ' · ' + t('kod:') + ' github.com/qbarteczek/meshcore-tracker';
+  $('btn-connect').addEventListener('click', () => (S.connected ? (confirm(t('Rozłączyć z bazą?')) && disconnect()) : connect()));
   $('btn-alarm-ok').addEventListener('click', () => { hideAlarm(); S.alarmMuted = Date.now() + 5 * 60000; });
   $('btn-orient').addEventListener('click', () => {
     S.northUp = !S.northUp; store.set('northup', S.northUp);
-    $('btn-orient').textContent = S.northUp ? 'Północ u góry' : 'Kierunek patrzenia u góry';
+    $('btn-orient').textContent = S.northUp ? t('Północ u góry') : t('Kierunek patrzenia u góry');
     render();
   });
-  $('btn-orient').textContent = S.northUp ? 'Północ u góry' : 'Kierunek patrzenia u góry';
+  $('btn-orient').textContent = S.northUp ? t('Północ u góry') : t('Kierunek patrzenia u góry');
   $('btn-wake').addEventListener('click', toggleWake);
   document.querySelectorAll('.cmd').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
@@ -518,17 +527,17 @@ function init() {
   $('chk-sound').checked = S.sound;
   $('chk-sound').addEventListener('change', (e) => { S.sound = e.target.checked; store.set('sound', S.sound); });
   $('btn-notif').addEventListener('click', async () => {
-    if ('Notification' in window) $('btn-notif').textContent = 'Powiadomienia: ' + await Notification.requestPermission();
+    if ('Notification' in window) $('btn-notif').textContent = t('Powiadomienia:') + ' ' + await Notification.requestPermission();
   });
   $('btn-clear').addEventListener('click', () => {
-    if (!confirm('Usunąć zapisane meldunki i ślad?')) return;
+    if (!confirm(t('Usunąć zapisane meldunki i ślad?'))) return;
     S.reports = []; S.myTrail = []; store.set('reports', []); store.set('mytrail', []);
     $('log').textContent = ''; render();
   });
   if (location.hash === '#demo') demo();
   for (const r of S.reports.slice(-30)) addLog(r.t, r.text.split('\n')[0], false);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && S.wake === null && $('btn-wake').textContent.includes('zawsze')) toggleWake();
+    if (document.visibilityState === 'visible' && S.wake === null && S.wakeWanted) toggleWake();
   });
   window.addEventListener('resize', drawRadar);
   startSensors();

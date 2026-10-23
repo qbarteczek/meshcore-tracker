@@ -13,6 +13,10 @@ z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Op
   działa, jeśli wcześniej pobrałeś mapę obszaru); aktywne po pierwszej pozycji GPS psa,
 - bateria i GPS psa, odstęp meldunków, czas do następnego, lista meldunków; ślad zapisany w telefonie.
 
+Języki: polski, angielski, niemiecki, czeski i szwedzki (`lang.js`, wbudowane – działa offline). Język wybiera się
+sam według ustawień telefonu; można go zmienić w Ustawieniach. Teksty meldunków na liście przychodzą z firmware bazy
+i są po polsku.
+
 ## Pierwsze uruchomienie (w domu, z internetem)
 
 1. Otwórz w Chrome `https://qbart.waw.pl/tracker/`, menu ⋮ → **Dodaj do ekranu głównego** (zainstaluj).
