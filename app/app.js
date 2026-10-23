@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-3';
+const VERSION = 'trk2-app-4';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -319,12 +319,18 @@ function render() {
   }
   // linki do map
   const p = fix || (rep && rep.lat != null ? rep : null);
-  for (const id of ['map-google', 'map-geo', 'map-nav']) $(id).classList.toggle('disabled', !p);
+  for (const id of ['map-organic', 'map-google', 'map-geo', 'map-nav']) $(id).classList.toggle('disabled', !p);
+  $('map-none').hidden = !!p;
   if (p) {
+    // Chrome na Androidzie nie otwiera gołych "geo:" ze strony – adresy "intent:" przekazuje do systemu.
+    // Mapy Google: linki https otwierają aplikację Map (bez internetu też, jeśli mapa jest pobrana).
     const ll = p.lat.toFixed(6) + ',' + p.lon.toFixed(6);
+    const om = 'https://play.google.com/store/apps/details?id=app.organicmaps';
+    $('map-organic').href = 'intent://map?v=1&ll=' + ll + '&n=Pies#Intent;scheme=om;package=app.organicmaps;'
+      + 'S.browser_fallback_url=' + encodeURIComponent(om) + ';end';
     $('map-google').href = 'https://www.google.com/maps/search/?api=1&query=' + ll;
-    $('map-geo').href = 'geo:' + ll + '?q=' + ll + '(Pies)';
-    $('map-nav').href = 'google.navigation:q=' + ll + '&mode=w';
+    $('map-geo').href = 'intent:' + ll + '?q=' + ll + '(Pies)#Intent;scheme=geo;action=android.intent.action.VIEW;end';
+    $('map-nav').href = 'https://www.google.com/maps/dir/?api=1&destination=' + ll + '&travelmode=walking';
   }
   drawRadar();
 }

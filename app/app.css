@@ -69,7 +69,8 @@ section, details { background: var(--card); border: 1px solid var(--line); borde
 .cmd.pending { outline: 3px solid var(--accent); outline-offset: -3px; }
 .cmd-status { color: var(--muted); font-size: .85rem; padding: 0 4px; margin-top: -4px; }
 
-.maps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px; }
+.maps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+.map-none { grid-column: span 2; color: var(--muted); font-size: .85rem; text-align: center; }
 .mapbtn { text-decoration: none; text-align: center; border: 1px solid var(--line); border-radius: 12px; padding: 12px 4px;
   font-weight: 600; font-size: .9rem; }
 .mapbtn.disabled { opacity: .4; pointer-events: none; }

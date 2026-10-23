@@ -9,8 +9,8 @@ z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Op
 - **przyciski** zamiast wpisywania poleceń: Szukaj, Znaleziony, co 1 / 2 / 5 min, Bluetooth psa, Koniec wędrówki;
   przycisk świeci, dopóki tracker nie potwierdzi polecenia,
 - **alarm** (dźwięk, wibracja, powiadomienie), gdy przez 2 odstępy + 1 min nie ma meldunku albo baza zgłosi brak,
-- przyciski **Mapy Google / Inna mapa / Prowadź pieszo** – pozycja psa w aplikacji mapowej (offline działa, jeśli
-  wcześniej pobrałeś mapę obszaru w Mapach Google lub OsmAnd),
+- przyciski **Organic Maps / Mapy Google / Inna mapa / Prowadź pieszo** – pozycja psa w aplikacji mapowej (offline
+  działa, jeśli wcześniej pobrałeś mapę obszaru); aktywne po pierwszej pozycji GPS psa,
 - bateria i GPS psa, odstęp meldunków, czas do następnego, lista meldunków; ślad zapisany w telefonie.
 
 ## Pierwsze uruchomienie (w domu, z internetem)
