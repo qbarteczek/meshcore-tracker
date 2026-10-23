@@ -38,5 +38,9 @@ Meldunki to czytelne wiadomości, które baza tworzy z `#T1` (zob. `TrackerBase.
 (`#SZUKAJ`, `#STOP`, `#CO n`, `#BT`, `#DOM`) – baza trzyma ją do najbliższego meldunku, a potwierdzenie
 doręczenia (`PUSH_CODE_SEND_CONFIRMED`) gasi podświetlenie przycisku.
 
+Aktualizacja: przy zmianie podbij `CACHE` w `sw.js` oraz `VERSION` i `?v=` w `index.html`. Instalator pobiera pliki
+z pominięciem pamięci przeglądarki (Cloudflare daje plikom `.js` `max-age=14400`), a strona przeładowuje się sama,
+gdy nowa wersja przejmie kontrolę.
+
 Pliki: `index.html`, `app.css`, `app.js`, `sw.js` (offline), `manifest.webmanifest`, ikony. Bez bibliotek,
 bez żądań do internetu. Serwer musi zezwalać na `geolocation` i `bluetooth` w nagłówku Permissions-Policy.
