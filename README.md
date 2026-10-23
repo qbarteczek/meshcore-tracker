@@ -1,3 +1,7 @@
+> **meshcore-tracker** – unofficial fork with a low-power dog tracker mode for the SenseCAP T1000-E, a field base
+> for a companion carried on a hike, and a 3D-printed enclosure. See **[TRACKER.md](TRACKER.md)** (Polish, with an
+> English summary). Branch `main`; upstream: [meshcore-dev/MeshCore](https://github.com/meshcore-dev/MeshCore).
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.

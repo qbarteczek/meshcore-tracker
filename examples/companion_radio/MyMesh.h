@@ -68,6 +68,7 @@
 
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
+#include "TrackerHooks.h"
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -113,6 +114,11 @@ public:
   void begin();
   void startInterface(BaseSerialInterface &serial);
   void setListener(Listener* listener) { _listener = listener; }
+  void setTrackerHooks(TrackerHooks* hooks) { _tracker = hooks; }
+
+  // used by TrackerBase (meshcore-tracker fork)
+  void queueLocalText(const ContactInfo& from, uint32_t timestamp, const char* text, int8_t snr4 = 0);
+  void contactLocationUpdated(ContactInfo& contact);
 
   const char *getNodeName();
   NodePrefs *getNodePrefs();
@@ -247,6 +253,7 @@ private:
   uint32_t pending_req;   // pending _BINARY_REQ
   BaseSerialInterface *_serial;
   Listener* _listener;
+  TrackerHooks* _tracker = NULL;
 
   ContactsIterator _iter;
   uint32_t _iter_filter_since;

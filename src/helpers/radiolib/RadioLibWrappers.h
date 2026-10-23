@@ -33,6 +33,9 @@ public:
 
   void begin() override;
   virtual void powerOff() { _radio->sleep(); }
+  // tracker mode: warm sleep between reports (config retained), standby on wake
+  void sleepRadio();
+  void wakeRadio();
   int recvRaw(uint8_t* bytes, int sz) override;
   uint32_t getEstAirtimeFor(int len_bytes) override;
   bool startSendRaw(const uint8_t* bytes, int len) override;

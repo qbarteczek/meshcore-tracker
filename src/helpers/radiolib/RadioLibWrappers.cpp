@@ -59,6 +59,16 @@ void RadioLibWrapper::idle() {
   state = STATE_IDLE;   // need another startReceive()
 }
 
+void RadioLibWrapper::sleepRadio() {
+  _radio->sleep();      // warm sleep, configuration retained
+  state = STATE_IDLE;   // a startReceive() is needed after wakeRadio()
+}
+
+void RadioLibWrapper::wakeRadio() {
+  _radio->standby();    // any SPI command wakes the chip
+  state = STATE_IDLE;   // next recvRaw() calls startRecv()
+}
+
 void RadioLibWrapper::triggerNoiseFloorCalibrate(int threshold) {
   _threshold = threshold;
   if (_num_floor_samples >= NUM_NOISE_FLOOR_SAMPLES) {  // ignore trigger if currently sampling

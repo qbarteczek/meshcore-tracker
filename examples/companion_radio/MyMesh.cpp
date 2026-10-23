@@ -415,6 +415,11 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
 }
 
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
+  if (_tracker) {
+    uint32_t ack_crc;
+    memcpy(&ack_crc, data, 4);
+    _tracker->onAck(ack_crc);
+  }
   if (_listener) {
     uint32_t ack_crc;
     memcpy(&ack_crc, data, 4);
@@ -435,6 +440,46 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
     }
   }
   return checkConnectionsAck(data);
+}
+
+// a message "from" a contact made up on this node (tracker base: readable report, alarm)
+void MyMesh::queueLocalText(const ContactInfo& from, uint32_t timestamp, const char* text, int8_t snr4) {
+  int i = 0;
+  if (app_target_ver >= 3) {
+    out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
+    out_frame[i++] = snr4;
+    out_frame[i++] = 0; // reserved1
+    out_frame[i++] = 0; // reserved2
+  } else {
+    out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV;
+  }
+  memcpy(&out_frame[i], from.id.pub_key, 6);
+  i += 6;
+  out_frame[i++] = 0xFF;            // path_len: direct
+  out_frame[i++] = TXT_TYPE_PLAIN;
+  memcpy(&out_frame[i], &timestamp, 4);
+  i += 4;
+  int tlen = strlen(text);
+  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+  memcpy(&out_frame[i], text, tlen);
+  i += tlen;
+  addToOfflineQueue(out_frame, i);
+  if (_serial->isConnected()) {
+    uint8_t frame[1];
+    frame[0] = PUSH_CODE_MSG_WAITING;
+    _serial->writeFrame(frame, 1);
+  }
+}
+
+// contact.gps_lat/lon changed (tracker base): store it and tell the app to refresh the contact
+void MyMesh::contactLocationUpdated(ContactInfo& contact) {
+  contact.lastmod = getRTCClock()->getCurrentTime();
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  if (_serial->isConnected()) {
+    out_frame[0] = PUSH_CODE_ADVERT;
+    memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
+    _serial->writeFrame(out_frame, 1 + PUB_KEY_SIZE);
+  }
 }
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
@@ -527,6 +572,7 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+  if (_tracker && _tracker->onText(from, pkt, sender_timestamp, text)) return;  // tracker report / command
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -1150,6 +1196,9 @@ void MyMesh::handleCmdFrame(size_t len) {
         msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
         result = sendCommandData(*recipient, msg_timestamp, attempt, txt_type, text, est_timeout);
         expected_ack = 0; // no Ack expected
+      } else if (_tracker && txt_type == TXT_TYPE_PLAIN
+                 && _tracker->onAppText(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout)) {
+        result = MSG_SEND_SENT_DIRECT;   // command for a tracker: held until its next report
       } else {
         result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout);
       }
@@ -1863,6 +1912,9 @@ void MyMesh::handleCmdFrame(size_t len) {
       strcpy(dp, sensors.getSettingValue(i));
       dp = strchr(dp, 0);
     }
+    if (_tracker && dp - (char *)&out_frame[1] < 140) {
+      dp += _tracker->formatSettings(dp, 160 - (dp - (char *)&out_frame[1]));
+    }
     _serial->writeFrame(out_frame, dp - (char *)out_frame);
   } else if (cmd_frame[0] == CMD_SET_CUSTOM_VAR && len >= 4) {
     cmd_frame[len] = 0;
@@ -1870,6 +1922,10 @@ void MyMesh::handleCmdFrame(size_t len) {
     char *np = strchr(sp, ':'); // look for separator char
     if (np) {
       *np++ = 0; // modify 'cmd_frame', replace ':' with null
+      if (_tracker && _tracker->setSetting(sp, np)) {
+        writeOKFrame();
+        return;
+      }
       bool success = sensors.setSettingValue(sp, np);
       if (success) {
         #if ENV_INCLUDE_GPS == 1

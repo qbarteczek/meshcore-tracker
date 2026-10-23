@@ -255,6 +255,8 @@ public :
         }
     }
 
+    unsigned long lastFixMillis() override { return _fix_seen ? _last_fix_ms : 0; }
+
     void formatDiagnostics(char* out, size_t out_size) override {
         if (out_size == 0) return;
 

@@ -26,6 +26,9 @@ public:
     virtual void stop() = 0;
     virtual void loop() = 0;
     virtual bool isEnabled() = 0;
+    // millis() of the last NMEA sentence carrying a valid fix (0 = never); lets callers tell a fresh
+    // fix from the last position kept by the parser while the receiver was asleep
+    virtual unsigned long lastFixMillis() { return 0; }
 
     // Format compact diagnostics in the caller-provided buffer. Providers that
     // have more information (for example UART counters) can override this.

@@ -116,6 +116,15 @@ StdRNG fast_rng;
 SimpleMeshTables tables;
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
 
+#ifdef TRACKER_MODE
+  #include "TrackerMode.h"
+  TrackerMode tracker;
+#endif
+#ifdef TRACKER_BASE
+  #include "TrackerBase.h"
+  TrackerBase tracker_base;
+#endif
+
 /* END GLOBAL OBJECTS */
 
 void halt() {
@@ -286,10 +295,25 @@ void setup() {
   the_mesh.setListener(&ui_task);
 #endif
 
+#if defined(TRACKER_MODE) && defined(BLE_PIN_CODE)
+  tracker.begin(&bluetooth_interface);
+  the_mesh.setTrackerHooks(&tracker);
+#endif
+#ifdef TRACKER_BASE
+  tracker_base.begin();
+  the_mesh.setTrackerHooks(&tracker_base);
+#endif
+
   board.onBootComplete();
 }
 
 void loop() {
+#ifdef TRACKER_MODE
+  if (tracker.loop()) return;   // sleeping / reporting: the companion loop below is not used
+#endif
+#ifdef TRACKER_BASE
+  tracker_base.loop();
+#endif
   the_mesh.loop();
   interface_manager.loop();
   sensors.loop();
