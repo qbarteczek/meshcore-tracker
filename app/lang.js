@@ -5,7 +5,7 @@
 'use strict';
 
 const LANGS = ['pl', 'en', 'de', 'cs', 'sv'];
-const LANG_NAMES = { pl: 'Polski', en: 'English', de: 'Deutsch', cs: 'Čeština', sv: 'Svenska' };
+const LANG_NAMES = { pl: '🇵🇱 Polski', en: '🇬🇧 English', de: '🇩🇪 Deutsch', cs: '🇨🇿 Čeština', sv: '🇸🇪 Svenska' };   // flagi: emoji (Android je rysuje)
 const LANG = (() => {
   let l = null;
   try { l = new URLSearchParams(location.search).get('lang'); } catch { /* */ }
