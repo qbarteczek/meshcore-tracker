@@ -1,5 +1,5 @@
 // Tryb offline: pliki aplikacji z pamięci telefonu, w tle sprawdzana nowsza wersja (gdy jest internet).
-const CACHE = 'tracker-psa-v2';
+const CACHE = 'tracker-psa-v3';
 const FILES = ['./', 'index.html', 'app.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {

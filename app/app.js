@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-2';
+const VERSION = 'trk2-app-3';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -70,7 +70,7 @@ async function openGatt() {
     const v = ev.target.value;
     onFrame(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
   });
-  await tx.startNotifications();       // tu Android pyta o PIN parowania (domyślnie 123456)
+  await tx.startNotifications();       // tu Android pyta o PIN parowania bazy
   S.connected = true;
   S.syncing = false;
   updateConnUI();

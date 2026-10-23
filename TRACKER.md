@@ -147,6 +147,9 @@ strona, albo aplikacja MeshCore.
 
 1. Wgraj firmware: tracker – `t1000e_tracker`, baza polowa – `Xiao_nrf52_tracker_base` (zob. niżej).
 2. Połącz aplikację z BAZA2 (PIN Bluetooth domyślnie `123456`). Ustaw radio jak w całej sieci.
+   **Od razu zmień PIN Bluetooth na własny** (6 cyfr, w ustawieniach urządzenia w aplikacji) – na BAZA2 i na TRK1
+   (w oknie Bluetooth trackera). Domyślny PIN jest publiczny: ktoś w zasięgu Bluetooth mógłby się sparować,
+   czytać meldunki i wysyłać polecenia.
 3. **Wymień kontakty** – obie strony muszą się znać, bo wiadomości są szyfrowane parami kluczy:
    - na BAZA2: dodaj TRK1 (advert z trackera albo udostępniony kontakt),
    - na TRK1: dodaj BAZA2 i oznacz ją jako **ulubioną** (gwiazdka). Aplikację połączysz z trackerem w oknie
@@ -247,6 +250,18 @@ Bazą domową jest companion podłączony do serwera przez USB; mały program (m
 odstęp zależny od odległości od domu i pory, tryb szukania, okno Bluetooth, przełącznik „Wędrówka”.
 Meldunków z flagą `f` nie zmienia (o odstępie decyduje wtedy baza polowa) i nie podnosi dla nich alarmu
 „brak kontaktu”. Most nie jest częścią tego repozytorium.
+
+## Bezpieczeństwo
+
+- Meldunki i polecenia między trackerem a bazami idą jako wiadomości prywatne MeshCore, szyfrowane kluczami
+  urządzeń; inne węzły sieci ich nie odczytają. Tracker przyjmuje polecenia `#C` tylko od swoich dwóch baz
+  (ulubionych kontaktów).
+- Słabym miejscem jest Bluetooth: **zmień domyślny PIN `123456`** na BAZA2 i TRK1. Kto zna PIN i jest w zasięgu
+  Bluetooth (kilkanaście metrów), może połączyć się z bazą jak Ty.
+- Aplikacja w przeglądarce nie wysyła niczego do internetu i nie przechowuje danych na serwerze – wszystko
+  zostaje w telefonie.
+- Nazwy urządzeń widać w sieci MeshCore (adverty); jeśli nie chcesz, żeby nazwa trackera zdradzała, co to jest,
+  nazwij go neutralnie.
 
 ## Licencja
 

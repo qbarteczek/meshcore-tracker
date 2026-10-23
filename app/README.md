@@ -18,7 +18,8 @@ z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Op
 1. Otwórz w Chrome `https://qbart.waw.pl/tracker/`, menu ⋮ → **Dodaj do ekranu głównego** (zainstaluj).
 2. Zezwól na lokalizację; w ustawieniach strony „Zezwól na powiadomienia”.
 3. Rozłącz aplikację MeshCore od bazy (Bluetooth przyjmuje jedną aplikację naraz), dotknij **Połącz z bazą**,
-   wybierz `MeshCore-<nazwa bazy>`, PIN `123456`.
+   wybierz `MeshCore-<nazwa bazy>` i wpisz PIN Bluetooth bazy (domyślny `123456` – **zmień go na własny**
+   w aplikacji MeshCore, w ustawieniach urządzenia; domyślny PIN jest publiczny).
 4. Tracker ustawia się sam przy pierwszym meldunku (albo w Ustawieniach → Tracker).
 
 **Internet jest potrzebny tylko do tego pierwszego otwarcia.** Potem aplikacja uruchamia się z pamięci telefonu,
