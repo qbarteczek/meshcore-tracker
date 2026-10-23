@@ -1913,7 +1913,13 @@ void MyMesh::handleCmdFrame(size_t len) {
       dp = strchr(dp, 0);
     }
     if (_tracker && dp - (char *)&out_frame[1] < 140) {
-      dp += _tracker->formatSettings(dp, 160 - (dp - (char *)&out_frame[1]));
+      char *start = dp;
+      int n = _tracker->formatSettings(dp, 160 - (dp - (char *)&out_frame[1]));
+      if (start == (char *)&out_frame[1] && n > 0 && *start == ',') {  // no sensor vars: drop the leading ','
+        memmove(start, start + 1, n);
+        n--;
+      }
+      dp += n;
     }
     _serial->writeFrame(out_frame, dp - (char *)out_frame);
   } else if (cmd_frame[0] == CMD_SET_CUSTOM_VAR && len >= 4) {

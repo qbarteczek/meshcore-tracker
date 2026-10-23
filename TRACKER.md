@@ -84,7 +84,7 @@ Po włączeniu zasilania przez 3 min działa okno Bluetooth. Tracker nie zasypia
 |---|---|
 | `tracker` | `1` – tryb trackera włączony, `0` – zwykły companion |
 | `trk_int` | domyślny odstęp w sekundach (do pierwszego polecenia bazy), np. `120` |
-| `trk_field` | nazwa kontaktu bazy polowej, np. `BAZA2`; `-` = bez bazy polowej |
+| `trk_field` | początek nazwy kontaktu bazy polowej, np. `BAZA2` (pasuje też do „BAZA2 🏕”); `-` = bez bazy polowej |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
 Obie bazy muszą być na trackerze **ulubionymi** kontaktami. Baza domowa = pierwszy ulubiony, który nie jest bazą
@@ -124,6 +124,78 @@ Zmienna własna bazy: `tb_int` – odstęp meldunków na wędrówce w sekundach,
 Uwaga: polecenia z bazy polowej docierają tylko wtedy, gdy tracker do niej melduje (tryb wędrówki).
 Po powrocie do domu wyłącz bazę polową albo wpisz `#DOM` – inaczej tracker dalej melduje do niej.
 
+## Telefon: aplikacja i obsługa na wędrówce
+
+### Jaka aplikacja
+
+Zwykła, oficjalna **aplikacja MeshCore** (Android / iOS) – bez żadnych dodatków. Telefon łączy się przez
+Bluetooth z **BAZA2** (nie z trackerem). Wszystko idzie przez radio LoRa w sieci MeshCore: nie potrzeba
+internetu, zasięgu GSM ani karty SIM w trackerze.
+
+```
+TRK1 (pies) ── LoRa, zero-hop ──► BAZA2 (kieszeń/plecak) ── Bluetooth ──► telefon: aplikacja MeshCore
+           ◄── polecenia #C ─────                      ◄── wpisujesz #SZUKAJ, #DOM ... ──
+```
+
+### Przygotowanie (raz, w domu)
+
+1. Wgraj firmware: tracker – `t1000e_tracker`, baza polowa – `Xiao_nrf52_tracker_base` (zob. niżej).
+2. Połącz aplikację z BAZA2 (PIN Bluetooth domyślnie `123456`). Ustaw radio jak w całej sieci.
+3. **Wymień kontakty** – obie strony muszą się znać, bo wiadomości są szyfrowane parami kluczy:
+   - na BAZA2: dodaj TRK1 (advert z trackera albo udostępniony kontakt),
+   - na TRK1: dodaj BAZA2 i oznacz ją jako **ulubioną** (gwiazdka). Aplikację połączysz z trackerem w oknie
+     Bluetooth: przytrzymaj przycisk 2–6 s (3 mrugnięcia), po włączeniu zasilania okno jest otwarte 3 min.
+4. Na TRK1 ustaw zmienną `trk_field` = początek nazwy BAZA2 (np. `BAZA2`). Aplikacja pokazuje zmienne własne
+   w ustawieniach urządzenia; można też użyć `meshcore-cli` albo biblioteki `meshcore` w Pythonie
+   (`set_custom_var`).
+5. Opcjonalnie na BAZA2 `tb_int` – jak często pies ma się meldować na wędrówce (domyślnie 60 s).
+6. Rozłącz aplikację od trackera i połącz z powrotem z BAZA2. Tracker nie zaśnie, dopóki aplikacja jest z nim
+   połączona – w terenie telefon ma być połączony tylko z bazą.
+
+### Na wędrówce
+
+- Weź BAZA2 (włączoną, z powerbankiem – zwykły companion bierze ok. 15–20 mA) i telefon z aplikacją połączoną z BAZA2.
+- **Przełączenie jest samo**: gdy tracker straci bazę domową, kolejny meldunek idzie do BAZA2 (flaga `f`).
+  Od razu można też przełączyć z domu (`#C b=f` z bazy domowej, np. przełącznikiem w Home Assistant).
+- **Co widać w aplikacji** – w czacie z kontaktem TRK1 przychodzi wiadomość co meldunek:
+
+  ```
+  1,2 km PN-WSCH · 3,98 V 82% · 22°C · 9 sat · co 60 s
+  https://maps.google.com/?q=52.22970,21.01220
+  ```
+  Odległość i kierunek liczone od BAZA2 – tylko gdy baza ma swój GPS z fixem; bez niego jest „GPS ok” i link.
+  Pozycja kontaktu TRK1 jest aktualizowana, więc tracker widać na **mapie** w aplikacji.
+- **Polecenia** – wpisz jako zwykłą wiadomość do TRK1 (czekają w BAZA2 do najbliższego meldunku, bo tracker śpi;
+  aplikacja pokaże „doręczone”, gdy tracker potwierdzi):
+
+  | Wpisz | Kiedy |
+  |---|---|
+  | `#SZUKAJ` | pies zniknął z oczu – meldunek co 30 s, ostatnia próba floodem przez całą sieć |
+  | `#STOP` | znaleziony – z powrotem co `tb_int` |
+  | `#CO 300` | rzadsze meldunki, żeby oszczędzać baterię trackera |
+  | `#BT` | otworzyć Bluetooth trackera na 10 min (np. zmiana ustawień w terenie) |
+  | `#DOM` | koniec wędrówki – tracker wraca do bazy domowej |
+
+- **Alarm** – gdy meldunki przestaną przychodzić (2 odstępy + 1 min), w czacie TRK1 pojawia się
+  „⚠ brak meldunku od N min, ostatnio … + link do ostatniej pozycji”, potem co 10 min (po 3 razach co 30 min).
+  Po odzyskaniu kontaktu wiadomość zaczyna się od „✅ kontakt wrócił”.
+
+### Wskazówki
+
+- **Powiadomienia**: włącz powiadomienia aplikacji MeshCore i wyłącz dla niej oszczędzanie baterii (Android),
+  inaczej system może zerwać połączenie Bluetooth w tle i alarm przyjdzie dopiero po otwarciu aplikacji.
+- **Mapa offline**: podkład mapy w aplikacji MeshCore pobiera się z internetu. Bez zasięgu ściągnij wcześniej
+  obszar w Google Maps lub OsmAnd – link z meldunku otworzy się wtedy także offline.
+- **Zasięg**: zero-hop między psem a bazą to zwykle kilkaset metrów do kilku km w terenie otwartym, w lesie
+  i za wzgórzem dużo mniej. Gdy w okolicy są repeatery, `#SZUKAJ` pozwala ostatniej próbie meldunku pójść
+  przez nie (flood).
+- **Bateria trackera**: przy meldunku co 60 s z GPS w ciągłej pracy pobór rośnie; na długą trasę rozważ `#CO 120`
+  albo więcej, a `#SZUKAJ` włączaj tylko na czas szukania.
+- **Po powrocie**: wpisz `#DOM` albo po prostu wyłącz BAZA2 – tracker po 3 nieudanych próbach sam wróci do
+  bazy domowej.
+- Telefon może być połączony tylko z jednym urządzeniem MeshCore naraz. Do zwykłych rozmów na wędrówce używaj
+  BAZA2 – to pełny companion (czaty, kanały, mapa).
+
 ## Budowanie i wgrywanie
 
 ```
@@ -134,7 +206,7 @@ python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o 
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
-Gotowe pliki: [release/](release/). Klucze, kontakty i ustawienia zostają przy aktualizacji (także ustawienia
+Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`). Klucze, kontakty i ustawienia zostają przy aktualizacji (także ustawienia
 trackera z wersji trk1).
 
 Baza dla XIAO ma GPS Ai-Thinker GP-02 na UART: GP-02 TX → D7, RX → D6, VCC → 3V3; magistrala I2C jest

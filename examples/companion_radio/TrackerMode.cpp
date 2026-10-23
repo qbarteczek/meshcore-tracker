@@ -157,7 +157,8 @@ bool TrackerMode::findBase(ContactInfo& dest, bool field) {
   ContactInfo c;
   while (it.hasNext(&the_mesh, c)) {
     if (!c.isFav()) continue;
-    bool is_field = _cfg.field[0] && strcasecmp(c.name, _cfg.field) == 0;
+    // name starts with trk_field ("BAZA2" matches "BAZA2 🏕", names often carry emoji)
+    bool is_field = _cfg.field[0] && strncasecmp(c.name, _cfg.field, strlen(_cfg.field)) == 0;
     if (is_field == field) { dest = c; return true; }
   }
   return false;

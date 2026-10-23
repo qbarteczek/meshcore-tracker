@@ -21,7 +21,7 @@
  *
  * Two bases:
  *   home base  = the first favourite contact that is not the field base (a node at home, e.g. on a server),
- *   field base = the favourite contact named by the custom var trk_field (a companion carried on a hike,
+ *   field base = the favourite contact whose name starts with the custom var trk_field (a companion carried on a hike,
  *                built with -D TRACKER_BASE, see TrackerBase.h).
  * Reports go to the active base. When it does not ACK, the tracker tries the other one; whichever ACKs
  * becomes the active base. The field base is reached zero-hop first (no flooding of the mesh). In field
