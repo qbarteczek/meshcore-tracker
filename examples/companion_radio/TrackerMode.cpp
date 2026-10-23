@@ -182,7 +182,7 @@ bool TrackerMode::handleButton() {
 #ifdef PIN_USER_BTN
   bool down = digitalRead(PIN_USER_BTN) == USER_BTN_PRESSED;
   if (down && !_btn_down) {
-    _btn_down = millis() | 1;
+    _btn_down = millis() ? millis() : 1;   // 0 = not pressed (never "| 1": millis() - it would wrap)
   } else if (down && millis() - _btn_down > 6000UL) {
     blink(5);
     board.powerOff();           // waits for release, wakes on the next press

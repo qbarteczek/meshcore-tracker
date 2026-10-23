@@ -182,7 +182,7 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   Tracker& t = slot(from.id.pub_key);
   bool repeat = t.last_ms && t.seq == (uint32_t)atol(f[8]) && millis() - t.last_ms < 60000UL;
   bool was_lost = t.alarms > 0;
-  t.last_ms = millis() | 1;
+  t.last_ms = millis() ? millis() : 1;   // 0 = no report yet (never "| 1": that can be 1 ms in the future)
   t.interval_s = atol(f[6]);
   t.seq = atol(f[8]);
   t.alarms = 0;
@@ -304,7 +304,9 @@ void TrackerBase::loop() {
     if (t.send_at && trkTimeReached(t.send_at)) sendCmd(t);
 
     if (!t.last_ms || !t.interval_s) continue;
-    unsigned long quiet = millis() - t.last_ms;
+    long quiet_l = (long)(millis() - t.last_ms);
+    if (quiet_l < 0) continue;
+    unsigned long quiet = quiet_l;
     if (quiet < 2 * t.interval_s * 1000UL + TB_ALARM_GRACE_MS) continue;
     unsigned long every = t.alarms >= 3 ? TB_ALARM_SLOW_MS : TB_ALARM_REPEAT_MS;
     if (t.alarms && millis() - t.alarm_ms < every) continue;
