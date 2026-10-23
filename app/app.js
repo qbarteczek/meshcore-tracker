@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-1';
+const VERSION = 'trk2-app-2';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -529,6 +529,8 @@ function init() {
   setInterval(() => { render(); checkLate(); }, 5000);
   render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // aplikacja ma zostać w telefonie na wyjazd bez internetu: prośba, żeby Chrome nie kasował jej plików
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
 init();

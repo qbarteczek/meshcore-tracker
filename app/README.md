@@ -21,6 +21,10 @@ z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Op
    wybierz `MeshCore-<nazwa bazy>`, PIN `123456`.
 4. Tracker ustawia się sam przy pierwszym meldunku (albo w Ustawieniach → Tracker).
 
+**Internet jest potrzebny tylko do tego pierwszego otwarcia.** Potem aplikacja uruchamia się z pamięci telefonu,
+a łączność idzie bez sieci komórkowej: pies → radio LoRa → baza → Bluetooth → telefon; pozycja z GPS telefonu.
+Sprawdzenie przed wyjazdem: tryb samolotowy, z powrotem włącz Bluetooth i lokalizację, uruchom z ikony, połącz z bazą.
+
 Na trasie: otwórz aplikację z ekranu głównego i „Połącz z bazą”. Najpewniej działa przy włączonym ekranie
 („Ekran: zawsze włączony”) – Android może usypiać Bluetooth stron w tle.
 
