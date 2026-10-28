@@ -7,7 +7,7 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=9">
 </head>
 <body>
 <header class="bar">
@@ -74,13 +74,53 @@
       <button id="hist-next" class="chip" type="button" aria-label="Następny dzień">›</button>
     </div>
     <canvas id="hist-map" aria-label="Ślad psa z wybranego dnia"></canvas>
-    <input id="hist-pos" type="range" min="0" max="0" value="0" aria-label="Czas na trasie">
+    <div class="hist-play">
+      <button id="hist-play" class="chip" type="button" aria-label="Odtwórz trasę">▶</button>
+      <input id="hist-pos" type="range" min="0" max="0" value="0" aria-label="Czas na trasie">
+      <select id="hist-speed" aria-label="Tempo odtwarzania">
+        <option value="0.5">½×</option><option value="1" selected>1×</option><option value="3">3×</option><option value="10">10×</option>
+      </select>
+    </div>
     <div id="hist-point" class="hist-point"></div>
     <div id="hist-sum" class="hist-sum">Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.</div>
+    <canvas id="hist-chart" aria-label="Wykres: bateria (linia) i prędkość (słupki)" hidden></canvas>
+    <ol id="hist-trips" class="trips" hidden></ol>
     <div class="hist-tools">
-      <button id="hist-gpx" class="chip" type="button">Zapisz GPX</button>
+      <button id="hist-gpx" class="chip" type="button">GPX</button>
+      <button id="hist-kml" class="chip" type="button">KML</button>
+      <button id="hist-csv" class="chip" type="button">CSV</button>
       <button id="hist-del" class="chip" type="button">Usuń ten dzień</button>
     </div>
+  </section>
+
+  <section class="zones-card">
+    <h2>Strefy</h2>
+    <ol id="zones" class="plain"></ol>
+    <div class="zone-form">
+      <input id="zone-name" type="text" maxlength="24" placeholder="Nazwa, np. Obóz" aria-label="Nazwa strefy">
+      <select id="zone-r" aria-label="Promień strefy">
+        <option value="50">50 m</option><option value="100">100 m</option><option value="200" selected>200 m</option>
+        <option value="500">500 m</option><option value="1000">1 km</option>
+      </select>
+      <select id="zone-src" aria-label="Środek strefy">
+        <option value="dog">wokół psa</option><option value="me">wokół mnie</option>
+      </select>
+      <button id="zone-add" class="chip" type="button">Dodaj strefę</button>
+    </div>
+    <div id="zone-msg" class="hist-sum">Alarm, gdy pies wyjdzie ze strefy (sprawdzane przy każdym meldunku).</div>
+  </section>
+
+  <section class="events-card">
+    <h2>Zdarzenia</h2>
+    <ol id="events" class="plain"></ol>
+    <button id="ev-clear" class="chip" type="button">Wyczyść dziennik</button>
+  </section>
+
+  <section class="stats-card">
+    <h2>Ostatnie dni</h2>
+    <canvas id="stats-chart" aria-label="Dystans psa w ostatnich dniach"></canvas>
+    <div id="stats-sum" class="hist-sum"></div>
+    <div id="stats-empty" class="hist-sum">Brak danych.</div>
   </section>
 
   <details class="settings">
@@ -103,7 +143,8 @@
     <p class="hint" id="ver"></p>
   </details>
 </main>
-<script src="lang.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="lang.js?v=9"></script>
+<script src="app.js?v=9"></script>
+<script src="analiza.js?v=9"></script>
 </body>
 </html>

@@ -102,3 +102,23 @@ section, details { background: var(--card); border: 1px solid var(--line); borde
 .hist-point { color: var(--me); font-size: .88rem; font-weight: 600; min-height: 1.2em; font-variant-numeric: tabular-nums; }
 .hist-sum { color: var(--muted); font-size: .88rem; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .hist-tools { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+
+.hist-play { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.hist-play #hist-pos { flex: 1; min-width: 0; margin: 0; }
+.hist-play select, .zone-form input, .zone-form select { padding: 6px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); font: inherit; color: inherit; min-width: 0; }
+#hist-chart, #stats-chart { width: 100%; display: block; margin-top: 8px; }
+.trips, .plain { list-style: none; margin: 8px 0 0; padding: 0; max-height: 240px; overflow: auto; }
+.trips li, .plain li { padding: 6px 0; border-top: 1px solid var(--line); font-size: .86rem; overflow-wrap: anywhere; }
+.trips li { cursor: pointer; }
+.trips li.stop { color: var(--warn); }
+.trips li.sel { background: color-mix(in srgb, var(--me) 14%, transparent); }
+.trips li time, .plain li time { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.plain li.empty { color: var(--muted); border-top: 0; }
+.zones-card, .events-card, .stats-card { padding: 10px 14px; }
+.zones-card h2, .events-card h2, .stats-card h2 { font-size: 1rem; margin: 0 0 6px; font-weight: 700; }
+#zones li { display: flex; gap: 8px; align-items: center; }
+#zones li span { flex: 1; min-width: 0; }
+.zone-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
+.zone-form input { grid-column: span 2; }
+.events-card .chip { margin-top: 8px; }

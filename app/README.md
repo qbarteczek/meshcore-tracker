@@ -11,7 +11,17 @@ z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Op
 - **alarm** (dźwięk, wibracja, powiadomienie), gdy przez 2 odstępy + 1 min nie ma meldunku albo baza zgłosi brak,
 - przyciski **Organic Maps / Mapy Google / Inna mapa / Prowadź pieszo** – pozycja psa w aplikacji mapowej (offline
   działa, jeśli wcześniej pobrałeś mapę obszaru); aktywne po pierwszej pozycji GPS psa,
-- bateria i GPS psa, odstęp meldunków, czas do następnego, lista meldunków; ślad zapisany w telefonie.
+- bateria i GPS psa, odstęp meldunków, czas do następnego, lista meldunków; ślad zapisany w telefonie,
+- **trasa dnia** (historia bez limitu w IndexedDB telefonu, po dniach): wybór dnia, mapka śladu ze strefami
+  i postojami, **odtwarzanie** (½×–10×), wykres baterii i prędkości, lista **przejść i postojów** (dystans, czas,
+  średnia i maksymalna prędkość), eksport **GPX / KML / CSV** (na Androidzie przez „Udostępnij”),
+- **strefy** (koło wokół psa albo telefonu, 50 m–1 km) z alarmem, gdy pies wyjdzie,
+- **dziennik zdarzeń**: wyjście/powrót do strefy, niska bateria trackera (≤ 20%), utrata GPS, szybki bieg
+  (≥ 15 km/h), brak meldunku,
+- **ostatnie dni**: dystans psa z 14 dni i łączny czas w ruchu.
+
+Analizy (`analiza.js`) wzorowane na raportach Traccara (Replay, Trips, Stops, Chart, Geofences, Events, Summary),
+liczone w telefonie – bez serwera i bez internetu. Postój: punkty w promieniu 40 m przez co najmniej 5 min.
 
 Języki: polski, angielski, niemiecki, czeski i szwedzki (`lang.js`, wbudowane – działa offline). Język wybiera się
 sam według ustawień telefonu; można go zmienić w Ustawieniach. Teksty meldunków na liście przychodzą z firmware bazy
@@ -46,5 +56,5 @@ Aktualizacja: przy zmianie podbij `CACHE` w `sw.js` oraz `VERSION` i `?v=` w `in
 z pominięciem pamięci przeglądarki (Cloudflare daje plikom `.js` `max-age=14400`), a strona przeładowuje się sama,
 gdy nowa wersja przejmie kontrolę.
 
-Pliki: `index.html`, `app.css`, `app.js`, `sw.js` (offline), `manifest.webmanifest`, ikony. Bez bibliotek,
+Pliki: `index.html`, `app.css`, `app.js`, `analiza.js`, `sw.js` (offline), `manifest.webmanifest`, ikony. Bez bibliotek,
 bez żądań do internetu. Serwer musi zezwalać na `geolocation` i `bluetooth` w nagłówku Permissions-Policy.

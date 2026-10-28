@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-8';
+const VERSION = 'trk2-app-9-dev';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -211,12 +211,15 @@ function onMessage(prefix, ts, text) {
     showAlarm(text.split('\n')[0]);
     return;
   }
+  const prev = lastReport();
   S.reports.push(r);
   if (S.reports.length > 300) S.reports.splice(0, S.reports.length - 300);
   store.set('reports', S.reports);
+  checkEvents(r, prev);   // strefy, bateria, szybki bieg (analiza.js)
   if (r.fix) histAdd([r]).then(() => { if (!H.day || H.day === dayKey(r.t)) histRefresh(dayKey(r.t)); });
   addLog(r.t, text.split('\n')[0], false);
   hideAlarm();
+  S.lateLogged = false;
   render();
 }
 
@@ -307,11 +310,13 @@ async function histRefresh(day) {
   $('hist-prev').disabled = i < 0 || i >= H.days.length - 1;
   $('hist-next').disabled = i <= 0;
   $('hist-day').disabled = !H.days.length;
-  $('hist-gpx').disabled = $('hist-del').disabled = !H.pts.length;
+  for (const id of ['hist-gpx', 'hist-kml', 'hist-csv', 'hist-del']) $(id).disabled = !H.pts.length;
   const pos = $('hist-pos');
   pos.max = Math.max(0, H.pts.length - 1);
   pos.value = pos.max;
-  pos.disabled = H.pts.length < 2;
+  pos.disabled = $('hist-play').disabled = H.pts.length < 2;
+  A.sel = null;
+  renderSegments();
   if (!H.pts.length) {
     $('hist-sum').textContent = t('Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.');
   } else {
@@ -322,6 +327,7 @@ async function histRefresh(day) {
       + ' · ' + tf('{n} pkt', { n: H.pts.length });
   }
   drawHist();
+  renderStats();
 }
 
 function drawHist() {
@@ -340,6 +346,7 @@ function drawHist() {
   if (!pts.length) {
     g.fillStyle = col('--muted'); g.font = '14px system-ui, sans-serif'; g.textAlign = 'center';
     g.fillText(t('brak pozycji'), w / 2, h / 2);
+    drawChart();
     return;
   }
   // rzut równoodległościowy wokół środka śladu, skala dobrana do obszaru (min. 100 m)
@@ -357,6 +364,7 @@ function drawHist() {
   g.fillText(fmtDist(bar), 10, h - 16);
   g.fillStyle = col('--warn'); g.font = 'bold 13px system-ui, sans-serif'; g.textAlign = 'right';
   g.fillText('N ↑', w - 8, 16);
+  drawHistExtras(g, proj, sc, col);   // strefy, postoje, wybrany odcinek (analiza.js)
   // ślad
   g.strokeStyle = col('--dog'); g.lineWidth = 2.5; g.lineJoin = 'round'; g.beginPath();
   pts.forEach((p, i) => { const [x, y] = proj(p); i ? g.lineTo(x, y) : g.moveTo(x, y); });
@@ -368,25 +376,7 @@ function drawHist() {
   dot(pts[0], col('--ok'), 6);
   dot(pts[pts.length - 1], col('--dog'), 7);
   if (sel && pts.length > 1) dot(sel, col('--me'), 7);
-}
-
-function histGpx() {
-  const x = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const name = t('Pies') + ' ' + H.day;
-  const pts = H.pts.map((p) => `<trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><time>${new Date(p.t).toISOString()}</time></trkpt>`);
-  const gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="tracker-psa" xmlns="http://www.topografix.com/GPX/1/1">\n'
-    + `<trk><name>${x(name)}</name><trkseg>\n${pts.join('\n')}\n</trkseg></trk>\n</gpx>\n`;
-  const file = new File([gpx], 'trasa-psa-' + H.day + '.gpx', { type: 'application/gpx+xml' });
-  // Android: „Udostępnij” otwiera listę aplikacji (Organic Maps, OsmAnd, Dysk…); inaczej zwykłe pobranie pliku
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    navigator.share({ files: [file], title: name }).catch(() => {});
-    return;
-  }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(file);
-  a.download = file.name;
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  drawChart();
 }
 
 function lastReport() { return S.reports.length ? S.reports[S.reports.length - 1] : null; }
@@ -606,6 +596,7 @@ function checkLate() {
   const late = Date.now() - rep.t - (2 * rep.int + 60) * 1000;
   if (late > 0) {
     const mins = Math.round((Date.now() - rep.t) / 60000);
+    if (!S.lateLogged) { S.lateLogged = true; addEvent('late', tf('Brak meldunku od {n} min', { n: mins }), false); }
     if ($('alarm').hidden || (Math.floor(late / 60000) !== S.lastLateMin)) {
       S.lastLateMin = Math.floor(late / 60000);
       showAlarm(tf('Brak meldunku od {n} min', { n: mins }) + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
@@ -668,6 +659,7 @@ function demo() {
       search: false, text: fmtDist(distM(lat0, lon0, lat, lon)) + ' · 4,05 V 84% · 14°C · 9 sat · co 60 s' };
   });
   S.myTrail = Array.from({ length: 20 }, (_, i) => [lat0 - 0.0002 * (20 - i), lon0 - 0.0003 * (20 - i), now]);
+  A.zones = [{ id: 'demo', name: t('Dom'), lat: lat0, lon: lon0, r: 500, on: true }];
   // trasa dnia: dziś (meldunki powyżej) i wczoraj (pętla), tylko w pamięci
   const y = now - 86400000;
   H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t) })).concat(Array.from({ length: 90 }, (_, i) => {
@@ -718,13 +710,13 @@ function init() {
   $('hist-next').addEventListener('click', () => histStep(-1));
   $('hist-day').addEventListener('change', (e) => histRefresh(e.target.value));
   $('hist-pos').addEventListener('input', drawHist);
-  $('hist-gpx').addEventListener('click', histGpx);
   $('hist-del').addEventListener('click', async () => {
     if (!H.day || !confirm(tf('Usunąć trasę z dnia {d}?', { d: fmtDay(H.day) }))) return;
     await histDelete(H.day);
     histRefresh('');
   });
-  if (location.hash === '#demo') demo();
+  initAnaliza();
+  if (location.hash === '#demo') { demo(); renderZones(); }
   for (const r of S.reports.slice(-30)) addLog(r.t, r.text.split('\n')[0], false);
   // meldunki zapisane przed wersją z historią (i przy każdym starcie, na wszelki wypadek) - put nie dubluje
   histAdd(S.reports).then(() => histRefresh());
@@ -749,4 +741,5 @@ function init() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
-init();
+// analiza.js ładuje się po app.js - start, gdy oba są gotowe
+document.addEventListener('DOMContentLoaded', init);
