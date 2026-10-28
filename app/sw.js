@@ -1,7 +1,7 @@
 // Tryb offline: pliki aplikacji z pamięci telefonu, w tle sprawdzana nowsza wersja (gdy jest internet).
 // Pliki zawsze pobierane z pominięciem pamięci przeglądarki (cache: 'reload' / 'no-cache'): Cloudflare każe
 // przeglądarce trzymać .js przez kilka godzin, więc inaczej nowa wersja instalowałaby stare pliki.
-const CACHE = 'tracker-psa-v7';
+const CACHE = 'tracker-psa-v8';
 const FILES = ['./', 'index.html', 'app.css', 'lang.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 const key = (url) => { const u = new URL(url, self.location.href); u.search = ''; u.hash = ''; return u.href; };

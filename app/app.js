@@ -4,7 +4,7 @@
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
 'use strict';
 
-const VERSION = 'trk2-app-7';
+const VERSION = 'trk2-app-8';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -214,9 +214,179 @@ function onMessage(prefix, ts, text) {
   S.reports.push(r);
   if (S.reports.length > 300) S.reports.splice(0, S.reports.length - 300);
   store.set('reports', S.reports);
+  if (r.fix) histAdd([r]).then(() => { if (!H.day || H.day === dayKey(r.t)) histRefresh(dayKey(r.t)); });
   addLog(r.t, text.split('\n')[0], false);
   hideAlarm();
   render();
+}
+
+// ------------------------------------------------------------------ historia: trasa dnia
+// S.reports trzyma tylko ostatnie 300 meldunków (radar). Każda pozycja psa trafia też do IndexedDB,
+// bez limitu i pogrupowana po dniach (czas lokalny telefonu), żeby można było wrócić do starszych dni.
+
+const H = { db: null, days: [], day: '', pts: [], mem: null };   // mem: pokaz #demo (bez zapisu)
+
+const dayKey = (ms) => {
+  const d = new Date(ms);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+};
+const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+
+function histDb() {
+  if (!H.db) {
+    H.db = new Promise((res, rej) => {
+      const r = indexedDB.open('tracker-psa', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('fixes', { keyPath: 't' }).createIndex('day', 'day');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  return H.db;
+}
+
+async function histStore(mode) {
+  return (await histDb()).transaction('fixes', mode).objectStore('fixes');
+}
+
+async function histAdd(reports) {
+  const fixes = reports.filter((r) => r.fix && r.lat != null);
+  if (H.mem || !fixes.length) return;
+  try {
+    const st = await histStore('readwrite');
+    // klucz = czas meldunku, więc ponowny zapis tego samego meldunku nic nie dubluje
+    for (const r of fixes) {
+      st.put({ t: r.t, day: dayKey(r.t), lat: r.lat, lon: r.lon, mv: r.mv, pct: r.pct, temp: r.temp,
+        sats: r.sats, search: r.search, tracker: S.tracker });
+    }
+    await new Promise((res, rej) => { st.transaction.oncomplete = res; st.transaction.onerror = () => rej(st.transaction.error); });
+  } catch (e) { console.warn('historia:', e); }
+}
+
+async function histDays() {   // [{day, n}] od najnowszego
+  const m = new Map();
+  if (H.mem) {
+    for (const p of H.mem) m.set(p.day, (m.get(p.day) || 0) + 1);
+  } else {
+    try {
+      const idx = (await histStore('readonly')).index('day');
+      await new Promise((res, rej) => {   // same klucze indeksu - bez czytania całych rekordów
+        const r = idx.openKeyCursor();
+        r.onsuccess = () => { const c = r.result; if (!c) { res(); return; } m.set(c.key, (m.get(c.key) || 0) + 1); c.continue(); };
+        r.onerror = () => rej(r.error);
+      });
+    } catch { return []; }
+  }
+  return [...m].map(([day, n]) => ({ day, n })).sort((a, b) => (a.day < b.day ? 1 : -1));
+}
+
+async function histGet(day) {
+  if (H.mem) return H.mem.filter((p) => p.day === day);
+  try { return (await reqP((await histStore('readonly')).index('day').getAll(day))).sort((a, b) => a.t - b.t); }
+  catch { return []; }
+}
+
+async function histDelete(day) {
+  if (H.mem) { H.mem = H.mem.filter((p) => p.day !== day); return; }
+  const st = await histStore('readwrite');
+  for (const k of await reqP(st.index('day').getAllKeys(day))) st.delete(k);
+  await new Promise((res) => { st.transaction.oncomplete = res; st.transaction.onerror = res; });
+}
+
+const fmtDay = (day) => new Date(day + 'T12:00:00').toLocaleDateString(LANG, { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' });
+const fmtTime = (ms) => new Date(ms).toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
+
+async function histRefresh(day) {
+  H.days = await histDays();
+  if (day !== undefined) H.day = day;
+  if (!H.days.some((d) => d.day === H.day)) H.day = H.days.length ? H.days[0].day : '';
+  const sel = $('hist-day');
+  sel.textContent = '';
+  for (const d of H.days) sel.add(new Option(fmtDay(d.day) + ' · ' + tf('{n} pkt', { n: d.n }), d.day, false, d.day === H.day));
+  H.pts = H.day ? await histGet(H.day) : [];
+  const i = H.days.findIndex((d) => d.day === H.day);
+  $('hist-prev').disabled = i < 0 || i >= H.days.length - 1;
+  $('hist-next').disabled = i <= 0;
+  $('hist-day').disabled = !H.days.length;
+  $('hist-gpx').disabled = $('hist-del').disabled = !H.pts.length;
+  const pos = $('hist-pos');
+  pos.max = Math.max(0, H.pts.length - 1);
+  pos.value = pos.max;
+  pos.disabled = H.pts.length < 2;
+  if (!H.pts.length) {
+    $('hist-sum').textContent = t('Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.');
+  } else {
+    let m = 0;
+    for (let k = 1; k < H.pts.length; k++) m += distM(H.pts[k - 1].lat, H.pts[k - 1].lon, H.pts[k].lat, H.pts[k].lon);
+    const a = H.pts[0].t, b = H.pts[H.pts.length - 1].t;
+    $('hist-sum').textContent = fmtTime(a) + '–' + fmtTime(b) + ' · ' + dur(b - a) + ' · ' + fmtDist(m)
+      + ' · ' + tf('{n} pkt', { n: H.pts.length });
+  }
+  drawHist();
+}
+
+function drawHist() {
+  const cv = $('hist-map'), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = Math.round(w * 0.75);
+  if (!w) return;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const col = (n) => css.getPropertyValue(n).trim();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const pts = H.pts, sel = pts[+$('hist-pos').value];
+  $('hist-point').textContent = sel ? fmtTime(sel.t) + (sel.mv ? ' · ' + num(sel.mv / 1000, 2) + ' V ' + sel.pct + '%' : '')
+    + (sel.sats ? ' · ' + sel.sats + ' sat' : '') + (sel.search ? ' · ' + t('szukanie') : '') : '';
+  if (!pts.length) {
+    g.fillStyle = col('--muted'); g.font = '14px system-ui, sans-serif'; g.textAlign = 'center';
+    g.fillText(t('brak pozycji'), w / 2, h / 2);
+    return;
+  }
+  // rzut równoodległościowy wokół środka śladu, skala dobrana do obszaru (min. 100 m)
+  let la0 = Infinity, la1 = -Infinity, lo0 = Infinity, lo1 = -Infinity;
+  for (const p of pts) { la0 = Math.min(la0, p.lat); la1 = Math.max(la1, p.lat); lo0 = Math.min(lo0, p.lon); lo1 = Math.max(lo1, p.lon); }
+  const cl = (la0 + la1) / 2, co = (lo0 + lo1) / 2, kx = K * R * Math.cos(cl * K), ky = K * R;
+  const pad = 18;
+  const sc = Math.min((w - 2 * pad) / Math.max(100, (lo1 - lo0) * kx), (h - 2 * pad) / Math.max(100, (la1 - la0) * ky));
+  const proj = (p) => [w / 2 + (p.lon - co) * kx * sc, h / 2 - (p.lat - cl) * ky * sc];
+  // podziałka
+  const steps = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+  const bar = steps.filter((s) => s * sc <= w / 3).pop() || steps[0];
+  g.strokeStyle = col('--muted'); g.fillStyle = col('--muted'); g.lineWidth = 2; g.font = '12px system-ui, sans-serif'; g.textAlign = 'left';
+  g.beginPath(); g.moveTo(10, h - 10); g.lineTo(10 + bar * sc, h - 10); g.stroke();
+  g.fillText(fmtDist(bar), 10, h - 16);
+  g.fillStyle = col('--warn'); g.font = 'bold 13px system-ui, sans-serif'; g.textAlign = 'right';
+  g.fillText('N ↑', w - 8, 16);
+  // ślad
+  g.strokeStyle = col('--dog'); g.lineWidth = 2.5; g.lineJoin = 'round'; g.beginPath();
+  pts.forEach((p, i) => { const [x, y] = proj(p); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  g.fillStyle = col('--trail');
+  for (const p of pts) { const [x, y] = proj(p); g.beginPath(); g.arc(x, y, 2.5, 0, 2 * Math.PI); g.fill(); }
+  // start (zielony), koniec (pomarańczowy), wybrany punkt (niebieski)
+  const dot = (p, c, r) => { const [x, y] = proj(p); g.fillStyle = c; g.strokeStyle = col('--card'); g.lineWidth = 2; g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fill(); g.stroke(); };
+  dot(pts[0], col('--ok'), 6);
+  dot(pts[pts.length - 1], col('--dog'), 7);
+  if (sel && pts.length > 1) dot(sel, col('--me'), 7);
+}
+
+function histGpx() {
+  const x = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const name = t('Pies') + ' ' + H.day;
+  const pts = H.pts.map((p) => `<trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"><time>${new Date(p.t).toISOString()}</time></trkpt>`);
+  const gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="tracker-psa" xmlns="http://www.topografix.com/GPX/1/1">\n'
+    + `<trk><name>${x(name)}</name><trkseg>\n${pts.join('\n')}\n</trkseg></trk>\n</gpx>\n`;
+  const file = new File([gpx], 'trasa-psa-' + H.day + '.gpx', { type: 'application/gpx+xml' });
+  // Android: „Udostępnij” otwiera listę aplikacji (Organic Maps, OsmAnd, Dysk…); inaczej zwykłe pobranie pliku
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: name }).catch(() => {});
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
 function lastReport() { return S.reports.length ? S.reports[S.reports.length - 1] : null; }
@@ -498,6 +668,12 @@ function demo() {
       search: false, text: fmtDist(distM(lat0, lon0, lat, lon)) + ' · 4,05 V 84% · 14°C · 9 sat · co 60 s' };
   });
   S.myTrail = Array.from({ length: 20 }, (_, i) => [lat0 - 0.0002 * (20 - i), lon0 - 0.0003 * (20 - i), now]);
+  // trasa dnia: dziś (meldunki powyżej) i wczoraj (pętla), tylko w pamięci
+  const y = now - 86400000;
+  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t) })).concat(Array.from({ length: 90 }, (_, i) => {
+    const a = (i / 90) * 2 * Math.PI, tt = y - (90 - i) * 60000;
+    return { t: tt, day: dayKey(tt), lat: lat0 + 0.004 * Math.sin(a), lon: lon0 + 0.006 * (1 - Math.cos(a)), mv: 4100 - i * 2, pct: 90 - Math.floor(i / 9), sats: 8, search: false };
+  }));
   status(t('Pokaz (dane przykładowe).'));
 }
 
@@ -534,8 +710,25 @@ function init() {
     S.reports = []; S.myTrail = []; store.set('reports', []); store.set('mytrail', []);
     $('log').textContent = ''; render();
   });
+  const histStep = (d) => {
+    const i = H.days.findIndex((x) => x.day === H.day) + d;
+    if (i >= 0 && i < H.days.length) histRefresh(H.days[i].day);
+  };
+  $('hist-prev').addEventListener('click', () => histStep(1));    // dni są od najnowszego
+  $('hist-next').addEventListener('click', () => histStep(-1));
+  $('hist-day').addEventListener('change', (e) => histRefresh(e.target.value));
+  $('hist-pos').addEventListener('input', drawHist);
+  $('hist-gpx').addEventListener('click', histGpx);
+  $('hist-del').addEventListener('click', async () => {
+    if (!H.day || !confirm(tf('Usunąć trasę z dnia {d}?', { d: fmtDay(H.day) }))) return;
+    await histDelete(H.day);
+    histRefresh('');
+  });
   if (location.hash === '#demo') demo();
   for (const r of S.reports.slice(-30)) addLog(r.t, r.text.split('\n')[0], false);
+  // meldunki zapisane przed wersją z historią (i przy każdym starcie, na wszelki wypadek) - put nie dubluje
+  histAdd(S.reports).then(() => histRefresh());
+  window.addEventListener('resize', drawHist);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && S.wake === null && S.wakeWanted) toggleWake();
   });

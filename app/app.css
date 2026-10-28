@@ -90,3 +90,15 @@ section, details { background: var(--card); border: 1px solid var(--line); borde
 .settings button { display: block; width: 100%; margin: 8px 0; padding: 10px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg); }
 .hint { color: var(--muted); font-size: .82rem; }
+
+.hist { padding: 10px 14px; }
+.hist h2 { font-size: 1rem; margin: 0 0 6px; font-weight: 700; }
+.hist-nav { display: flex; gap: 8px; align-items: center; }
+.hist-nav select { flex: 1; min-width: 0; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); font: inherit; color: inherit; }
+.hist-nav .chip { font-size: 1.2rem; padding: 4px 14px; }
+.chip:disabled { opacity: .4; }
+#hist-map { width: 100%; aspect-ratio: 4 / 3; display: block; margin-top: 8px; background: var(--bg); border-radius: 10px; }
+#hist-pos { width: 100%; margin: 8px 0 2px; accent-color: var(--me); }
+.hist-point { color: var(--me); font-size: .88rem; font-weight: 600; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+.hist-sum { color: var(--muted); font-size: .88rem; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.hist-tools { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }

@@ -7,7 +7,7 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 <header class="bar">
@@ -66,6 +66,23 @@
     <ol id="log"></ol>
   </section>
 
+  <section class="hist">
+    <h2>Trasa dnia</h2>
+    <div class="hist-nav">
+      <button id="hist-prev" class="chip" type="button" aria-label="Poprzedni dzień">‹</button>
+      <select id="hist-day" aria-label="Dzień"></select>
+      <button id="hist-next" class="chip" type="button" aria-label="Następny dzień">›</button>
+    </div>
+    <canvas id="hist-map" aria-label="Ślad psa z wybranego dnia"></canvas>
+    <input id="hist-pos" type="range" min="0" max="0" value="0" aria-label="Czas na trasie">
+    <div id="hist-point" class="hist-point"></div>
+    <div id="hist-sum" class="hist-sum">Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.</div>
+    <div class="hist-tools">
+      <button id="hist-gpx" class="chip" type="button">Zapisz GPX</button>
+      <button id="hist-del" class="chip" type="button">Usuń ten dzień</button>
+    </div>
+  </section>
+
   <details class="settings">
     <summary>Ustawienia</summary>
     <label>Tracker (kontakt)
@@ -86,7 +103,7 @@
     <p class="hint" id="ver"></p>
   </details>
 </main>
-<script src="lang.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="lang.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

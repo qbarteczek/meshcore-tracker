@@ -112,6 +112,19 @@ const T = {
   'pd.-zach.': ['south-west', 'Südwesten', 'jihozápad', 'sydväst'],
   'zachód': ['west', 'Westen', 'západ', 'väster'],
   'pn.-zach.': ['north-west', 'Nordwesten', 'severozápad', 'nordväst'],
+  // trasa dnia
+  'Trasa dnia': ['Route of the day', 'Tagesroute', 'Trasa dne', 'Dagens rutt'],
+  'Poprzedni dzień': ['Previous day', 'Vorheriger Tag', 'Předchozí den', 'Föregående dag'],
+  'Następny dzień': ['Next day', 'Nächster Tag', 'Následující den', 'Nästa dag'],
+  'Dzień': ['Day', 'Tag', 'Den', 'Dag'],
+  'Ślad psa z wybranego dnia': ['The dog’s track on the selected day', 'Spur des Hundes am gewählten Tag', 'Stopa psa ve vybraném dni', 'Hundens spår den valda dagen'],
+  'Czas na trasie': ['Time on the route', 'Zeit auf der Route', 'Čas na trase', 'Tid på rutten'],
+  'Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.': ['No saved routes yet. The route is saved automatically from reports with a GPS position.', 'Noch keine gespeicherten Routen. Die Route wird automatisch aus Meldungen mit GPS-Position gespeichert.', 'Zatím žádné uložené trasy. Trasa se ukládá sama z hlášení s polohou GPS.', 'Inga sparade rutter ännu. Rutten sparas automatiskt från rapporter med GPS-position.'],
+  'Zapisz GPX': ['Save GPX', 'GPX speichern', 'Uložit GPX', 'Spara GPX'],
+  'Usuń ten dzień': ['Delete this day', 'Diesen Tag löschen', 'Smazat tento den', 'Radera denna dag'],
+  'Usunąć trasę z dnia {d}?': ['Delete the route from {d}?', 'Route vom {d} löschen?', 'Smazat trasu ze dne {d}?', 'Radera rutten från {d}?'],
+  '{n} pkt': ['{n} pts', '{n} Pkt.', '{n} bodů', '{n} pkt'],
+  'Pies': ['Dog', 'Hund', 'Pes', 'Hund'],
 };
 
 const DICT = {};
