@@ -72,9 +72,21 @@ przełącznik „Wędrówka”).
 
 | Naciśnięcie | Co robi |
 |---|---|
-| krótkie (1 mrugnięcie) | meldunek od razu |
+| 1× krótko (1 mrugnięcie) | meldunek od razu |
+| 2× krótko (2 mrugnięcia) | **„OK, wszystko w porządku”** – meldunek z flagą `O`; baza i aplikacja pokazują 👍 OK, kiosk w domu pasek |
+| 3× krótko (4 mrugnięcia + sygnał) | **SOS** – meldunek co 30 s, każda ponowna próba floodem (przez repeatery), do odwołania |
 | 2–6 s (3 mrugnięcia) | okno Bluetooth na 10 min – zwykły companion, działa aplikacja MeshCore |
 | > 6 s (5 mrugnięć) | wyłączenie (włącza się ponownie przyciskiem) |
+
+Krótkie naciśnięcia liczą się seriami: tracker czeka 0,8 s po ostatnim i dopiero wtedy wie, czy to 1, 2 czy 3.
+**SOS** trwa, dopóki baza nie odpowie `#STOP` (w aplikacji przycisk „Znaleziony”, w domu – wyłączenie szukania
+w Home Assistant). Wtedy tracker **piszczy 2×** – osoba w terenie wie, że wezwanie dotarło. Baza pokazuje
+`🆘 SOS ·` na początku meldunku, aplikacja włącza alarm z dźwiękiem, a w domu most włącza alarm w Home Assistant
+i alarm na cały ekran na kiosku.
+
+W drugą stronę: polecenie **`#DZWON`** (w aplikacji „Brzęczyk”) – tracker piszczy 3× przy najbliższym meldunku
+(wezwanie do powrotu albo szukanie trackera po dźwięku). Tracker słucha tylko kilka sekund po meldunku, więc
+sygnał przychodzi z opóźnieniem do jednego odstępu meldunków.
 
 Po włączeniu zasilania przez 3 min działa okno Bluetooth. Tracker nie zasypia, dopóki aplikacja jest połączona.
 
@@ -84,7 +96,7 @@ Po włączeniu zasilania przez 3 min działa okno Bluetooth. Tracker nie zasypia
 |---|---|
 | `tracker` | `1` – tryb trackera włączony, `0` – zwykły companion |
 | `trk_int` | domyślny odstęp w sekundach (do pierwszego polecenia bazy), np. `120` |
-| `trk_field` | początek nazwy kontaktu bazy polowej, np. `BAZA2` (pasuje też do „BAZA2 🏕”); `-` = bez bazy polowej |
+| `trk_field` | początek nazwy bazy polowej, np. `BAZA2` (pasuje też do „BAZA2 🏕”); **kilka baz** rozdzielonych `/`, np. `BAZA2/BAZA3` – tracker melduje się do tej, która odpowiada, przy braku odpowiedzi próbuje następnej, a dopiero potem domu; `-` = bez bazy polowej |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
 Obie bazy muszą być na trackerze **ulubionymi** kontaktami. Baza domowa = pierwszy ulubiony, który nie jest bazą
@@ -123,6 +135,28 @@ Zmienna własna bazy: `tb_int` – odstęp meldunków na wędrówce w sekundach,
 
 Uwaga: polecenia z bazy polowej docierają tylko wtedy, gdy tracker do niej melduje (tryb wędrówki).
 Po powrocie do domu wyłącz bazę polową albo wpisz `#DOM` – inaczej tracker dalej melduje do niej.
+
+## Śledzenie osób (za zgodą)
+
+Ten sam tracker może nosić **osoba** – dziecko, znajomy, uczestnik wyprawy – tam, gdzie lokalizatory GSM nie działają,
+bo nie ma zasięgu telefonii: w górach, na pustyni, w głębokim lesie, na wodzie. Łączność idzie radiem LoRa
+(869 MHz) prosto do bazy w kieszeni opiekuna albo przez repeatery MeshCore, bez operatora i bez internetu.
+
+- **Zgoda jest warunkiem.** Śledź tylko osobę, która się na to zgodziła i wie, kiedy tracker działa; dziecko –
+  za zgodą opiekuna i z wyjaśnieniem, po co. Pozycja osoby to dane osobowe (RODO): trzymaj je tylko na swoich
+  urządzeniach (aplikacja nic nie wysyła do internetu) i usuń historię, gdy przestanie być potrzebna.
+- W aplikacji w Ustawieniach wybierz **„Kto nosi tracker”: pies / osoba / dziecko** – zmienia ikonę i nazwę na mapie.
+  Kilka trackerów widać naraz (lista trackerów, każdy z własnym stanem, strefami i trasą).
+- **Przycisk**: 2× = „OK, wszystko w porządku” (umówiony meldunek, np. co godzinę albo na szczycie), 3× = SOS
+  (zob. „Przycisk” wyżej). Odpowiedź z bazy: brzęczyk (`#DZWON`) i 2 sygnały po odebraniu SOS.
+- **Zasięg**: bez przeszkód (grań, pustynia, woda) kilka do kilkunastu km między trackerem a bazą; w dolinie, lesie
+  albo za grzbietem dużo mniej. Pomaga baza trzymana wysoko i przenośny repeater MeshCore postawiony na wzniesieniu.
+  W SOS każda ponowna próba idzie floodem, więc meldunek może dojść przez obce repeatery do każdej z baz.
+- **Kilka baz**: każda osoba w grupie może mieć bazę (np. BAZA2 i BAZA3, `trk_field` = `BAZA2/BAZA3`) – tracker
+  melduje się do tej, która jest w zasięgu, i nadal do domu, gdy wróci w zasięg repeatera.
+- **Bateria**: T1000-E (700 mAh) przy meldunku co 2 min wytrzymuje ok. doby z GPS; na długą wyprawę ustaw rzadsze
+  meldunki (`#CO 300`) i włączaj szukanie tylko w razie potrzeby. To pomoc w odnalezieniu, nie certyfikowany
+  sprzęt ratunkowy – w górach nadal zgłaszaj wyjście i miej przy sobie numer ratunkowy (GOPR/TOPR 985, 112).
 
 ## Telefon: aplikacja i obsługa na wędrówce
 

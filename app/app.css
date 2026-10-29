@@ -107,7 +107,7 @@ body[data-tab="replay"] .map-tools .wide { display: none; }
 .cmd.big { grid-column: span 3; font-size: 1.15rem; min-height: 64px; }
 .cmd.search { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .cmd.search small { color: inherit; opacity: .85; }
-.cmd.home { grid-column: span 2; }
+.cmd.home { grid-column: span 1; }
 .cmd:active { transform: scale(.98); }
 .cmd.pending { outline: 3px solid var(--accent); outline-offset: -3px; }
 .cmd-status { color: var(--muted); font-size: .85rem; margin-top: 8px; }
@@ -255,3 +255,10 @@ button:disabled { opacity: .4; }
   .dist { font-size: 2rem; }
 }
 /* duży monitor: mapa ok. 3/4 szerokości (kolumna paneli 25vw, najwyżej 420 px) */
+
+/* ---------- v14: SOS z przycisku trackera ---------- */
+.pin.sos .c { background: var(--warn); animation: pulse 0.8s ease-in-out infinite; }
+.pin.sos .a { border-bottom-color: var(--warn); }
+.device.sos { border: 2px solid var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 25%, transparent); }
+.device.sos #d-state { color: var(--warn); font-weight: 700; }
+.sos-tag { color: #fff; background: var(--warn); border-radius: 6px; padding: 0 5px; font-size: .75rem; }

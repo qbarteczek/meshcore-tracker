@@ -37,6 +37,10 @@ Układ jak w Traccarze (dolne zakładki), wszystko w telefonie, bez serwera:
   **udostępnianie pozycji** (systemowe „Udostępnij” albo SMS – działa bez internetu), **reguły powiadomień**
   (dla każdego rodzaju zdarzenia: alarm z dźwiękiem / powiadomienie / tylko zapis), okres trasy **od–do**,
   **raport dni** (tabela 31 dni: dystans, w ruchu, prędkość, postoje, bateria) i **licznik km**,
+- **SOS i OK z przycisku trackera** (wersja 14, firmware trk3): 2× przycisk = „OK, wszystko w porządku”,
+  3× = SOS – alarm z dźwiękiem, czerwona karta i pulsujący znacznik; „Znaleziony” odwołuje SOS (tracker piszczy 2×);
+  przycisk **Brzęczyk** (`#DZWON`) – tracker piszczy 3×; **„Kto nosi tracker”**: pies / osoba / dziecko (osoby tylko
+  za zgodą, zob. TRACKER.md),
 - **układ zależny od ekranu**: telefon w pionie – wszystko jedno pod drugim, zakładki na dole; telefon w poziomie
   i komputer – zakładki z boku, mapa na całą wysokość po lewej, panele w kolumnie po prawej; zakładki bez mapy
   (Radar, Zdarzenia, Ustawienia) rozkładają karty w siatce na całą szerokość.

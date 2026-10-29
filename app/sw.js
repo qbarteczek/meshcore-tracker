@@ -3,7 +3,7 @@
 // przeglądarce trzymać .js przez kilka godzin, więc inaczej nowa wersja instalowałaby stare pliki.
 // Kafelki map (OSM, OpenTopoMap, satelita Esri): każdy obejrzany kafelek zostaje w osobnej pamięci (nie znika przy nowej wersji aplikacji),
 // najpierw z pamięci, z sieci tylko brakujące; najstarsze usuwane powyżej MAX_TILES.
-const CACHE = 'tracker-psa-v13';
+const CACHE = 'tracker-psa-v14';
 const TILES = 'tracker-psa-tiles';
 const MAX_TILES = 8000;   // ok. 150–250 MB (OSM, turystyczna, satelita)
 const TILE_HOSTS = /^(tile\.openstreetmap\.org|[abc]\.tile\.opentopomap\.org|server\.arcgisonline\.com)$/;

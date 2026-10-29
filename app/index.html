@@ -7,8 +7,8 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="vendor/leaflet.css?v=13">
-<link rel="stylesheet" href="app.css?v=13">
+<link rel="stylesheet" href="vendor/leaflet.css?v=14">
+<link rel="stylesheet" href="app.css?v=14">
 </head>
 <body data-tab="map">
 <header class="bar">
@@ -47,7 +47,7 @@
   </section>
 
   <!-- ================= Mapa: karta psa, polecenia, strefa ================= -->
-  <section class="device view-map">
+  <section id="device-card" class="device view-map">
     <div class="dev-head">
       <span id="d-dot" class="dot"></span>
       <div class="dev-name"><b id="d-name">Pies</b><span id="d-state" class="muted">brak danych</span></div>
@@ -77,11 +77,12 @@
     <h2>Polecenia</h2>
     <div class="cmd-grid">
       <button class="cmd big search" data-cmd="#SZUKAJ" type="button">Szukaj<small>meldunek co 30 s</small></button>
-      <button class="cmd big found" data-cmd="#STOP" type="button">Znaleziony<small>koniec szukania</small></button>
+      <button class="cmd big found" data-cmd="#STOP" type="button">Znaleziony<small>koniec szukania i SOS</small></button>
       <button class="cmd" data-cmd="#CO 60" type="button">Co 1 min</button>
       <button class="cmd" data-cmd="#CO 120" type="button">Co 2 min</button>
       <button class="cmd" data-cmd="#CO 300" type="button">Co 5 min</button>
-      <button class="cmd" data-cmd="#BT" type="button">Bluetooth psa<small>10 min</small></button>
+      <button class="cmd" data-cmd="#BT" type="button">Bluetooth<small>10 min</small></button>
+      <button class="cmd" data-cmd="#DZWON" type="button">Brzęczyk<small>3 sygnały</small></button>
       <button class="cmd home" data-cmd="#DOM" data-confirm="Zakończyć wędrówkę? Tracker wróci do bazy domowej." type="button">Koniec wędrówki</button>
     </div>
     <div id="cmd-status" class="cmd-status">Polecenie dojdzie do psa przy jego najbliższym meldunku.</div>
@@ -229,9 +230,16 @@
     <label>Tracker (kontakt)
       <select id="sel-tracker"><option value="">– wybierz po połączeniu –</option></select>
     </label>
-    <label>Nazwa psa na mapie
+    <label>Nazwa na mapie
       <input id="inp-name" type="text" maxlength="24" placeholder="Pies">
     </label>
+    <label>Kto nosi tracker
+      <select id="sel-kind">
+        <option value="dog">🐕 pies</option><option value="person">🧑 osoba</option><option value="child">🧒 dziecko</option>
+      </select>
+    </label>
+    <p class="hint">Osobę albo dziecko śledź tylko za ich zgodą (dziecko – za zgodą opiekuna). Przycisk trackera: 1× meldunek teraz,
+      2× „OK, wszystko w porządku”, 3× szybko SOS.</p>
     <label>Język
       <select id="sel-lang"></select>
     </label>
@@ -270,10 +278,10 @@
   <button data-tab="events" type="button"><span>🔔</span>Zdarzenia<i id="ev-badge" hidden></i></button>
   <button data-tab="settings" type="button"><span>⚙️</span>Ustawienia</button>
 </nav>
-<script src="vendor/leaflet.js?v=13"></script>
-<script src="lang.js?v=13"></script>
-<script src="app.js?v=13"></script>
-<script src="analiza.js?v=13"></script>
-<script src="narzedzia.js?v=13"></script>
+<script src="vendor/leaflet.js?v=14"></script>
+<script src="lang.js?v=14"></script>
+<script src="app.js?v=14"></script>
+<script src="analiza.js?v=14"></script>
+<script src="narzedzia.js?v=14"></script>
 </body>
 </html>

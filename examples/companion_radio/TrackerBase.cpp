@@ -112,14 +112,15 @@ static char* writeLink(char* dp, double lat, double lon) {
   return dp;
 }
 
-// "#C i=60 s=1" tokens -> values (empty = not set); order of the result: i s b c
-struct CmdSet { char v[4][8]; };
-static const char CMD_KEYS[4] = {'i', 's', 'b', 'c'};
+// "#C i=60 s=1" tokens -> values (empty = not set); order of the result: i s b c z
+#define CMD_NKEYS 5
+struct CmdSet { char v[CMD_NKEYS][8]; };
+static const char CMD_KEYS[CMD_NKEYS] = {'i', 's', 'b', 'c', 'z'};
 
 static void cmdParse(CmdSet& cs, const char* text) {
   for (const char* p = text; *p; p++) {
     if (p[1] != '=') continue;
-    for (int k = 0; k < 4; k++) {
+    for (int k = 0; k < CMD_NKEYS; k++) {
       if (p[0] != CMD_KEYS[k]) continue;
       int n = 0;
       const char* q = p + 2;
@@ -131,7 +132,7 @@ static void cmdParse(CmdSet& cs, const char* text) {
 
 static void cmdFormat(char* dest, const CmdSet& cs) {
   char* dp = dest + sprintf(dest, "#C");
-  for (int k = 0; k < 4; k++) {
+  for (int k = 0; k < CMD_NKEYS; k++) {
     if (cs.v[k][0]) dp += sprintf(dp, " %c=%s", CMD_KEYS[k], cs.v[k]);
   }
 }
@@ -216,8 +217,10 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   if (repeat) return true;   // retransmission: the app already has it
 
   // readable message for the app
-  char msg[160];
+  char msg[220];   // the app frame keeps ~160 characters; the map link comes last
   char* dp = msg;
+  if (strchr(flags, 'S')) dp += sprintf(dp, "\xF0\x9F\x86\x98 SOS \xC2\xB7 ");   // "🆘 SOS · " (3 presses on the tracker)
+  if (strchr(flags, 'O')) dp += sprintf(dp, "\xF0\x9F\x91\x8D OK \xC2\xB7 ");     // "👍 OK · " (2 presses: all fine)
   if (was_lost) dp += sprintf(dp, "\xE2\x9C\x85 kontakt wr\xC3\xB3" "ci\xC5\x82 \xC2\xB7 ");   // "✅ kontakt wrócił · "
   if (fix) {
     char* w = writeWhere(dp, t);
@@ -240,7 +243,7 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   }
   if (fix) dp += sprintf(dp, " \xC2\xB7 %s sat", f[5]);
   dp += sprintf(dp, " \xC2\xB7 co %lu s", (unsigned long)t.interval_s);
-  if (strchr(flags, 's')) dp += sprintf(dp, " \xC2\xB7 SZUKANIE");
+  if (strchr(flags, 's') && !strchr(flags, 'S')) dp += sprintf(dp, " \xC2\xB7 SZUKANIE");   // SOS implies search
   if (strchr(flags, 'l')) dp += sprintf(dp, " \xC2\xB7 po przerwie");
   if (t.fix) {
     if (!fix) dp += sprintf(dp, "\nostatnio: ");
@@ -262,6 +265,7 @@ bool TrackerBase::onAppText(ContactInfo& to, uint32_t ts, uint8_t attempt, const
   else if (strcasecmp(text, "#STOP") == 0)           sprintf(cmd, "#C s=0 i=%lu", (unsigned long)(_cfg.field_int ? _cfg.field_int : 120));
   else if (strcasecmp(text, "#DOM") == 0)            strcpy(cmd, "#C b=h");
   else if (strcasecmp(text, "#BT") == 0)             strcpy(cmd, "#C c=1");
+  else if (strcasecmp(text, "#DZWON") == 0)          strcpy(cmd, "#C z=3");   // tracker beeps 3x (call back / find it)
   else if (strncasecmp(text, "#CO ", 4) == 0)        sprintf(cmd, "#C i=%ld", constrain(atol(text + 4), 15L, 3600L));
   else return false;   // other text: a normal message
 

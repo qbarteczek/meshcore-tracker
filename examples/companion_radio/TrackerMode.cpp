@@ -23,6 +23,9 @@ extern MyMesh the_mesh;
 #define TRK_MAX_INTERVAL       3600
 #define TRK_BOOT_CONFIG_SECS   180          // Bluetooth window after power-on
 #define TRK_BUTTON_CONFIG_SECS 600          // Bluetooth window after a 2-6 s button hold
+#define TRK_SOS_TAPS 3                      // short presses in a row = SOS
+#define TRK_SOS_GAP_MS 800UL                // max. pause between those presses
+#define TRK_SOS_INTERVAL 30                 // report interval during SOS (s)
 #define TRK_GPS_FIRST_MS       180000UL     // first fix after boot (cold start)
 #define TRK_GPS_MAX_MS         60000UL      // later fixes (hot start from RTC backup)
 #define TRK_FIX_SETTLE_MS      3000UL       // keep a fresh fix running this long before using it
@@ -150,24 +153,48 @@ void TrackerMode::runMesh() {
   board.loop();
 }
 
-// home base = first favourite that is not the field base; field base = favourite named trk_field
-bool TrackerMode::findBase(ContactInfo& dest, bool field) {
-  if (field && !_cfg.field[0]) return false;
-  ContactsIterator it = the_mesh.startContactsIterator();
-  ContactInfo c;
-  while (it.hasNext(&the_mesh, c)) {
-    if (!c.isFav()) continue;
-    // name starts with trk_field ("BAZA2" matches "BAZA2 🏕", names often carry emoji)
-    bool is_field = _cfg.field[0] && strncasecmp(c.name, _cfg.field, strlen(_cfg.field)) == 0;
-    if (is_field == field) { dest = c; return true; }
+// home base = first favourite that is not a field base; field bases = favourites named by trk_field
+// trk_field: one or more name prefixes separated by '/' ("BAZA2/BAZA3"); a name matches when it starts with
+// one of them ("BAZA2" matches "BAZA2 🏕", names often carry emoji)
+bool TrackerMode::isFieldName(const char* name) {
+  const char* p = _cfg.field;
+  while (*p) {
+    const char* e = strchr(p, '/');
+    size_t n = e ? (size_t)(e - p) : strlen(p);
+    if (n && strncasecmp(name, p, n) == 0) return true;
+    if (!e) break;
+    p = e + 1;
   }
   return false;
 }
 
+// field: the field base number _field_idx among the matching favourites (several field bases: rotate on failure)
+bool TrackerMode::findBase(ContactInfo& dest, bool field, int* count) {
+  if (count) *count = 0;
+  if (field && !_cfg.field[0]) return false;
+  ContactInfo c, first;
+  int n = 0;
+  bool found = false;
+  ContactsIterator it = the_mesh.startContactsIterator();
+  while (it.hasNext(&the_mesh, c)) {
+    if (!c.isFav()) continue;
+    bool is_field = _cfg.field[0] && isFieldName(c.name);
+    if (is_field != field) continue;
+    if (!field) { dest = c; if (count) *count = 1; return true; }   // home: the first one
+    if (n == 0) first = c;
+    if (n == _field_idx) { dest = c; found = true; }
+    n++;
+  }
+  if (count) *count = n;
+  if (n && !found) { _field_idx = 0; dest = first; found = true; }
+  return found;
+}
+
 bool TrackerMode::isBase(const ContactInfo& c) {
+  if (!c.isFav()) return false;
   ContactInfo b;
   if (findBase(b, false) && memcmp(b.id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0) return true;
-  return findBase(b, true) && memcmp(b.id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0;
+  return _cfg.field[0] && isFieldName(c.name);   // any of the field bases may send commands
 }
 
 void TrackerMode::setFieldMode(bool on) {
@@ -194,19 +221,58 @@ bool TrackerMode::handleButton() {
       enterConfig(TRK_BUTTON_CONFIG_SECS);
       return true;
     }
-    if (held >= 50UL && _state == ST_SLEEP) {
-      blink(1);
-      _next_wake = millis();    // report now
+    if (held >= 30UL) {          // short press: counted, decided after a pause (no blinking here - it blocks)
+      _taps = (_taps && millis() - _last_tap <= TRK_SOS_GAP_MS) ? _taps + 1 : 1;
+      _last_tap = millis();
     }
+  }
+  // end of a series of short presses: 1 = report now, 2 = "OK", 3+ = SOS
+  if (!down && _taps && millis() - _last_tap > TRK_SOS_GAP_MS) {
+    uint8_t n = _taps;
+    _taps = 0;
+    if (n >= TRK_SOS_TAPS) {     // SOS: report every 30 s, flooding, until the base answers #STOP
+      _sos = _search = true;
+      _interval_s = TRK_SOS_INTERVAL;
+      blink(4);
+      buzz(1, 500);
+    } else if (n == 2) {         // "OK, all fine" - goes with the report sent right now
+      _ok_pending = true;
+      blink(2);
+    } else {
+      blink(1);
+    }
+    if (_state == ST_SLEEP) _next_wake = millis();
   }
 #endif
   return false;
+}
+
+// buzzer (T1000-E): base command z=N and the answer to an SOS; not while waiting for an ACK
+void TrackerMode::buzz(int n, int ms) {
+#ifdef PIN_BUZZER
+#ifdef PIN_BUZZER_EN
+  pinMode(PIN_BUZZER_EN, OUTPUT);
+  digitalWrite(PIN_BUZZER_EN, HIGH);
+#endif
+  for (int i = 0; i < n; i++) {
+    tone(PIN_BUZZER, 2700);
+    delay(ms);
+    noTone(PIN_BUZZER);
+    delay(200);
+  }
+#ifdef PIN_BUZZER_EN
+  digitalWrite(PIN_BUZZER_EN, LOW);
+#endif
+#else
+  blink(n);
+#endif
 }
 
 // ------------------------------------------------------------------ report cycle
 
 void TrackerMode::startCycle() {
   _cycle_start = millis();
+  _field_tries = 0;
   _fix = _moved = false;
   _fresh_since = 0;
   _gps_wake = millis();
@@ -234,6 +300,8 @@ void TrackerMode::composeReport() {
   if (_moved) *dp++ = 'm';
   if (!_fix) *dp++ = 'n';
   if (_search) *dp++ = 's';
+  if (_sos) *dp++ = 'S';
+  if (_ok_pending) { *dp++ = 'O'; _ok_pending = false; }
   if (_misses) *dp++ = 'l';
   if (_home_check || targetIsField()) *dp++ = 'f';
   sprintf(dp, ",%lu", (unsigned long)_seq);
@@ -248,6 +316,7 @@ void TrackerMode::newMessage() {
 
 void TrackerMode::finishCycle() {
   _fallback = _home_check = false;
+  if (_buzz_pending) { buzz(_buzz_pending, 350); _buzz_pending = 0; }
   if (_interval_s > TRK_KEEP_GPS_INTERVAL) gpsPower(false);
   if (_config_requested) {
     _config_requested = false;
@@ -271,7 +340,11 @@ bool TrackerMode::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
     long v = atol(p + 2);
     switch (p[0]) {
       case 'i': _interval_s = constrain((uint32_t)v, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL); break;
-      case 's': _search = v != 0; break;
+      case 's':
+        _search = v != 0;
+        if (!v && _sos) { _sos = false; _buzz_pending = 2; }   // SOS answered: two beeps for the person
+        break;
+      case 'z': _buzz_pending = (uint8_t)constrain(v, 1L, 10L); break;   // "call": beep N times
       case 'c': _config_requested = v != 0; break;
       case 'b': setFieldMode(p[2] == 'f' || p[2] == '1'); break;
     }
@@ -305,7 +378,7 @@ bool TrackerMode::loop() {
         startCycle();
       } else {
         unsigned long left = _next_wake - millis();
-        delay(left > 200 ? 200 : left);   // FreeRTOS tickless idle -> System ON sleep
+        delay(left > 50 ? 50 : left);     // FreeRTOS tickless idle -> System ON sleep; 50 ms: short presses are seen
       }
       return true;
 
@@ -358,6 +431,7 @@ bool TrackerMode::loop() {
           real->out_path_len = 0;   // the field base is usually close to the dog: zero-hop, no flooding
         }
         if (_attempt == max_att - 1 && _search && !_home_check) the_mesh.resetPathTo(*real);  // last try: flood
+        if (_sos && _attempt >= 1) the_mesh.resetPathTo(*real);   // SOS: every retry floods (repeaters, other paths)
         base = *real;
       }
       uint32_t est_timeout = 0;
@@ -391,6 +465,9 @@ bool TrackerMode::loop() {
           _state = ST_SEND;
         } else if (_home_check) {
           finishCycle();                               // home out of range: normal on a hike
+        } else if (_field_mode && !_fallback && ++_field_tries < fieldCount()) {
+          _field_idx++;                                // next field base (e.g. the other one is switched off)
+          newMessage();
         } else if (!_fallback && findBase(other, !_field_mode)) {
           _fallback = true;                            // try the other base
           newMessage();

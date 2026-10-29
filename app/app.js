@@ -7,7 +7,7 @@
 // Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-13';
+const VERSION = 'trk2-app-14';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -39,6 +39,7 @@ const S = {
   tracker: store.get('tracker', ''),           // prefix wybranego trackera (karta, polecenia, trasa)
   dogName: store.get('dogname', ''),           // nazwa wybranego trackera z wersji < 11
   names: store.get('names', {}),               // prefix -> nazwa na mapie
+  kinds: store.get('kinds', {}),               // prefix -> 'dog' | 'person' | 'child'
   reports: store.get('reports', []),           // {t, lat, lon, fix, mv, pct, temp, sats, int, search, text, spd, crs}
   myTrail: store.get('mytrail', []),           // [lat, lon, t]
   battWarn: store.get('battwarn', true),
@@ -211,7 +212,9 @@ function parseReport(text) {
   if (tc) r.temp = parseInt(tc[1], 10);
   r.sats = sats ? parseInt(sats[1], 10) : 0;
   r.int = iv ? parseInt(iv[1], 10) : 0;
-  r.search = /SZUKANIE/.test(text);
+  r.sos = /SOS/.test(text);                         // 3x przycisk na trackerze
+  r.ok = /👍 OK/.test(text);                         // 2x przycisk: „wszystko w porządku”
+  r.search = /SZUKANIE/.test(text) || r.sos;
   r.back = /kontakt wrócił/.test(text);
   return r;
 }
@@ -252,13 +255,10 @@ function onMessage(prefix, ts, text) {
   S.reports.push(r);
   if (S.reports.length > MAX_REPORTS) S.reports.splice(0, S.reports.length - MAX_REPORTS);
   store.set('reports', S.reports);
-  checkEvents(r, prev);                             // strefy, bateria, szybki bieg… (analiza.js)
+  if (prefix === S.tracker) { S.lateEvent = false; hideAlarm(); }   // meldunek przyszedł (przed zdarzeniami: SOS włącza alarm)
+  checkEvents(r, prev);                             // strefy, bateria, szybki bieg, SOS… (analiza.js)
   if (r.fix) histAdd([r]).then(() => { if (S.tab === 'replay' && prefix === S.tracker) { fillDays(); loadReplay(false); } });
-  if (prefix === S.tracker) {
-    S.lateEvent = false;
-    hideAlarm();
-    if (S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
-  }
+  if (prefix === S.tracker && S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
   render();
   renderDevices();
   if (A.evFilter === 'rep') renderEvents();
@@ -289,6 +289,7 @@ function selectDevice(dev) {
   lastDotsN = -1; if (dogMarker) dogMarker._key = null;
   fillTrackerSelect();
   $('inp-name').value = S.names[dev] || '';
+  $('sel-kind').value = kindOf(dev);
   render(); renderDevices(); renderZones();
   if (S.tab === 'replay') fillDays().then(() => loadReplay(true));
   else centerOn('dog');
@@ -475,9 +476,9 @@ function drawMap() {
   if (!live) { dots.clearLayers(); lastDotsN = -1; }
   if (f && live) {
     const st = devState();
-    const key = st + '|' + (f.spd >= 1.5 ? Math.round(f.crs) : '') + '|' + dogName();
+    const key = st + '|' + (f.spd >= 1.5 ? Math.round(f.crs) : '') + '|' + label() + '|' + !!(lastReport() && lastReport().sos);
     dogMarker.setLatLng([f.lat, f.lon]);
-    if (key !== dogMarker._key) { dogMarker._key = key; dogMarker.setIcon(pinIcon(st === 'on' ? '' : 'off', f.spd >= 1.5 ? f.crs : null, dogName())); }
+    if (key !== dogMarker._key) { dogMarker._key = key; dogMarker.setIcon(pinIcon((st === 'on' ? '' : 'off') + (lastReport() && lastReport().sos ? ' sos' : ''), f.spd >= 1.5 ? f.crs : null, label())); }
     if (!map.hasLayer(dogMarker)) dogMarker.addTo(map);
   } else if (map.hasLayer(dogMarker)) dogMarker.remove();
   if (S.me) {
@@ -490,7 +491,7 @@ function drawMap() {
     for (const d of devices().slice(1)) {
       const o = lastFix(d);
       if (!o) continue;
-      L.marker([o.lat, o.lon], { icon: pinIcon('other', o.spd >= 1.5 ? o.crs : null, dogName(d)), zIndexOffset: 900 })
+      L.marker([o.lat, o.lon], { icon: pinIcon('other' + (lastReport(d) && lastReport(d).sos ? ' sos' : ''), o.spd >= 1.5 ? o.crs : null, label(d)), zIndexOffset: 900 })
         .on('click', () => selectDevice(d)).addTo(others);
     }
   }
@@ -599,8 +600,14 @@ function dogName(dev = S.tracker) {
   if (dev === S.tracker && S.dogName) return S.dogName;
   const c = S.contacts.get(dev);
   if (c && c.name) return c.name;
-  return devices().length > 1 ? t('Pies') + ' ' + (devices().indexOf(dev) + 1) : t('Pies');
+  const base = t(KIND_NAME[kindOf(dev)]);
+  return devices().length > 1 ? base + ' ' + (devices().indexOf(dev) + 1) : base;
 }
+// rodzaj trackera: pies, osoba albo dziecko (osoby tylko za ich zgodą – zob. TRACKER.md)
+const KIND_ICON = { dog: '🐕', person: '🧑', child: '🧒' };
+const KIND_NAME = { dog: 'Pies', person: 'Osoba', child: 'Dziecko' };
+const kindOf = (dev = S.tracker) => S.kinds[dev] || 'dog';
+const label = (dev = S.tracker) => KIND_ICON[kindOf(dev)] + ' ' + dogName(dev);
 
 // 'on' = meldunki na czas, 'late' = spóźniony, 'off' = brak danych
 function devState(dev = S.tracker) {
@@ -631,8 +638,9 @@ function render() {
 
   const st = devState();
   $('d-dot').className = 'dot ' + st;
-  $('d-name').textContent = dogName();
-  $('d-state').textContent = st === 'on' ? t('meldunki na czas') + (S.connected ? '' : ' · ' + t('baza rozłączona'))
+  $('d-name').textContent = label();
+  $('device-card').classList.toggle('sos', !!(rep && rep.sos));
+  $('d-state').textContent = rep && rep.sos ? t('SOS – wzywa pomocy! „Znaleziony” odwołuje alarm') : st === 'on' ? t('meldunki na czas') + (S.connected ? '' : ' · ' + t('baza rozłączona'))
     : st === 'late' ? t('spóźniony meldunek') : t('brak danych');
   if (rep) {
     const late = st === 'late';
@@ -788,7 +796,8 @@ function demo() {
   S.me = { lat: lat0 + 0.004, lon: lon0 + 0.006, acc: 8, t: now };
   S.heading = 30;
   S.tracker = 'demo1';
-  S.names = { demo1: 'Burek', demo2: 'Luna' };
+  S.names = { demo1: 'Burek', demo2: 'Ania' };
+  S.kinds = { demo1: 'dog', demo2: 'person' };
   S.reports = [];
   for (let i = 0; i < n; i++) {
     const k = i < 25 ? i : i < 33 ? 25 + (i - 25) * 0.03 : i - 7;   // postój w środku spaceru
@@ -803,6 +812,7 @@ function demo() {
     S.reports.push({ t: now - (12 - i) * 60000 - 30000, lat, lon, fix: true, mv: 3950, pct: 64, temp: 15, sats: 7, int: 60, search: false, dev: 'demo2',
       text: '3,95 V 64% · 15°C · 7 sat · co 60 s' });
   }
+  Object.assign(S.reports[S.reports.length - 1], { sos: true, search: true, int: 30, text: '🆘 SOS · 3,95 V 64% · 15°C · 7 sat · co 30 s' });
   S.reports.sort((a, b) => a.t - b.t);
   prepReports();
   N.pois = [{ id: 'p1', name: 'Auto', icon: '🚗', lat: lat0 - 0.001, lon: lon0 - 0.002 }];
@@ -815,6 +825,7 @@ function demo() {
     { t: now - 119 * 60000, type: 'zone_set', text: tf('Dodano strefę „{n}”.', { n: t('Obóz') }) + ' 2 km', lat: lat0 + 0.016, lon: lon0 + 0.02 },
     { t: now - 70 * 60000, type: 'late', text: tf('Brak meldunku od {n} min', { n: 6 }) },
     { t: now - 64 * 60000, type: 'back', text: t('Kontakt z psem wrócił') },
+    { t: now - 60000, type: 'sos', text: 'Ania: ' + t('SOS z przycisku trackera!'), lat: lat0 + 0.0164, lon: lon0 + 0.0234 },
   ];
   // historia tras tylko w pamięci: dziś (meldunki powyżej) i wczoraj (pętla)
   const y = now - 864e5;
@@ -859,6 +870,12 @@ function init() {
   // ustawienia
   $('sel-tracker').addEventListener('change', (e) => { if (e.target.value) selectDevice(e.target.value); });
   $('inp-name').value = S.names[S.tracker] || S.dogName;
+  $('sel-kind').value = kindOf();
+  $('sel-kind').addEventListener('change', (e) => {
+    S.kinds[S.tracker] = e.target.value; store.set('kinds', S.kinds);
+    if (dogMarker) dogMarker._key = null;
+    render(); renderDevices();
+  });
   $('inp-name').placeholder = t('Pies');
   $('inp-name').addEventListener('change', (e) => {
     S.names[S.tracker] = e.target.value.trim(); if (!S.names[S.tracker]) delete S.names[S.tracker];

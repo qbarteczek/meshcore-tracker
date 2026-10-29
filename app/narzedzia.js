@@ -28,7 +28,7 @@ function renderDevices() {
     const parts = [rep ? ago(rep.t) : t('brak danych')];
     if (rep && rep.pct != null) parts.push(rep.pct + '%');
     if (f && S.me) parts.push(fmtDist(distM(S.me.lat, S.me.lon, f.lat, f.lon)));
-    li.innerHTML = `<span class="dot ${st}"></span><span class="x"><b>${esc(dogName(d))}</b><br><small class="muted">${esc(parts.join(' · '))}</small></span>`;
+    li.innerHTML = `<span class="dot ${st}"></span><span class="x"><b>${esc(label(d))}</b>${rep && rep.sos ? ' <b class="sos-tag">SOS</b>' : ''}<br><small class="muted">${esc(parts.join(' · '))}</small></span>`;
     li.addEventListener('click', () => selectDevice(d));
     ol.append(li);
   }
@@ -189,6 +189,7 @@ function sharePos(sms) {
 // ------------------------------------------------------------------ reguły powiadomień
 
 const RULE_LABEL = {
+  sos: 'SOS z przycisku', ok: 'OK z przycisku',
   zone_out: 'Wyjście ze strefy', zone_in: 'Powrót do strefy', late: 'Brak meldunku', alarm: 'Alarm z bazy',
   batt: 'Niska bateria', nofix: 'Utrata GPS', fast: 'Szybki bieg', back: 'Powrót kontaktu', search: 'Szukanie',
   cmd: 'Polecenie przyjęte', conn: 'Połączenie z bazą', disc: 'Rozłączenie z bazą',

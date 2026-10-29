@@ -328,6 +328,25 @@ const T = {
   "Licznik (cała historia): {d}": ["Odometer (all history): {d}", "Kilometerzähler (gesamt): {d}", "Počítadlo (celá historie): {d}", "Mätare (hela historiken): {d}"],
   "obszar": ["area", "Fläche", "oblast", "område"],
   "Pies wyszedł ze strefy „{n}” ({d} poza granicą)": ["The dog left zone “{n}” ({d} outside the boundary)", "Der Hund hat Zone „{n}“ verlassen ({d} außerhalb der Grenze)", "Pes opustil zónu „{n}“ ({d} za hranicí)", "Hunden lämnade zonen ”{n}” ({d} utanför gränsen)"],
+  // --- v14: SOS i OK z przycisku, brzęczyk, osoby
+  "Osoba": ["Person", "Person", "Osoba", "Person"],
+  "Dziecko": ["Child", "Kind", "Dítě", "Barn"],
+  "SOS – wzywa pomocy! „Znaleziony” odwołuje alarm": ["SOS – calling for help! “Found” cancels the alarm", "SOS – ruft um Hilfe! „Gefunden“ beendet den Alarm", "SOS – volá o pomoc! „Nalezen“ zruší poplach", "SOS – ber om hjälp! ”Hittad” avbryter larmet"],
+  "SOS z przycisku trackera!": ["SOS from the tracker button!", "SOS über die Tracker-Taste!", "SOS z tlačítka trackeru!", "SOS från spårarens knapp!"],
+  "SOS odwołane": ["SOS cancelled", "SOS beendet", "SOS zrušeno", "SOS avbrutet"],
+  "OK z przycisku – wszystko w porządku": ["OK from the button – all fine", "OK über die Taste – alles in Ordnung", "OK z tlačítka – vše v pořádku", "OK från knappen – allt är bra"],
+  "SOS z przycisku": ["SOS from the button", "SOS über die Taste", "SOS z tlačítka", "SOS från knappen"],
+  "OK z przycisku": ["OK from the button", "OK über die Taste", "OK z tlačítka", "OK från knappen"],
+  "koniec szukania i SOS": ["ends search and SOS", "beendet Suche und SOS", "konec hledání a SOS", "avslutar sökning och SOS"],
+  "Bluetooth": ["Bluetooth", "Bluetooth", "Bluetooth", "Bluetooth"],
+  "Brzęczyk": ["Buzzer", "Summer", "Bzučák", "Summer"],
+  "3 sygnały": ["3 beeps", "3 Töne", "3 pípnutí", "3 pip"],
+  "Nazwa na mapie": ["Name on the map", "Name auf der Karte", "Jméno na mapě", "Namn på kartan"],
+  "Kto nosi tracker": ["Who wears the tracker", "Wer trägt den Tracker", "Kdo nosí tracker", "Vem bär spåraren"],
+  "🐕 pies": ["🐕 dog", "🐕 Hund", "🐕 pes", "🐕 hund"],
+  "🧑 osoba": ["🧑 person", "🧑 Person", "🧑 osoba", "🧑 person"],
+  "🧒 dziecko": ["🧒 child", "🧒 Kind", "🧒 dítě", "🧒 barn"],
+  "Osobę albo dziecko śledź tylko za ich zgodą (dziecko – za zgodą opiekuna). Przycisk trackera: 1× meldunek teraz, 2× „OK, wszystko w porządku”, 3× szybko SOS.": ["Track a person or a child only with their consent (a child – with the guardian’s consent). Tracker button: 1× report now, 2× “OK, all fine”, 3× quickly SOS.", "Personen oder Kinder nur mit ihrer Zustimmung verfolgen (Kinder – mit Zustimmung der Eltern). Tracker-Taste: 1× sofort melden, 2× „OK, alles in Ordnung“, 3× schnell SOS.", "Osobu nebo dítě sleduj jen s jejich souhlasem (dítě – se souhlasem opatrovníka). Tlačítko trackeru: 1× hlášení hned, 2× „OK, vše v pořádku“, 3× rychle SOS.", "Spåra en person eller ett barn endast med deras samtycke (barn – med vårdnadshavarens samtycke). Spårarens knapp: 1× rapport nu, 2× ”OK, allt är bra”, 3× snabbt SOS."],
 };
 
 const DICT = {};

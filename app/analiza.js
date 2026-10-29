@@ -566,16 +566,16 @@ function zonesStatus(fix) {
 
 // ------------------------------------------------------------------ zdarzenia
 
-const EV_ICON = { alarm: '⚠️', late: '⏰', zone_out: '🚧', zone_in: '🏠', zone_set: '⭕', batt: '🪫', fast: '💨', nofix: '📡',
+const EV_ICON = { sos: '🆘', ok: '👍', alarm: '⚠️', late: '⏰', zone_out: '🚧', zone_in: '🏠', zone_set: '⭕', batt: '🪫', fast: '💨', nofix: '📡',
   search: '🔍', cmd: '📨', conn: '🔗', disc: '🔌', back: '✅' };
-const EV_ALARM = ['alarm', 'late', 'zone_out', 'batt'];
-const RULE_TYPES = ['zone_out', 'zone_in', 'late', 'alarm', 'batt', 'nofix', 'fast', 'back', 'search', 'cmd', 'conn', 'disc'];
-const RULE_DEFAULT = { zone_out: 'alarm', late: 'alarm', alarm: 'alarm', batt: 'notify', back: 'notify' };
+const EV_ALARM = ['sos', 'alarm', 'late', 'zone_out', 'batt'];
+const RULE_TYPES = ['sos', 'ok', 'zone_out', 'zone_in', 'late', 'alarm', 'batt', 'nofix', 'fast', 'back', 'search', 'cmd', 'conn', 'disc'];
+const RULE_DEFAULT = { sos: 'alarm', ok: 'notify', zone_out: 'alarm', late: 'alarm', alarm: 'alarm', batt: 'notify', back: 'notify' };
 A.rules = store.get('rules', {});
 const ruleOf = (type) => A.rules[type] || RULE_DEFAULT[type] || 'log';
 // kto: przy kilku trackerach nazwa przed treścią zdarzenia
 const who = (dev) => (devices().length > 1 ? dogName(dev) + ': ' : '');
-const EV_GOOD = ['zone_in', 'back'];
+const EV_GOOD = ['zone_in', 'back', 'ok'];
 
 // silent: tylko zapis (np. „brak meldunku” – alarm obsługuje checkLate według tej samej reguły)
 function addEvent(type, text, alarm, tt, pos, silent) {
@@ -620,7 +620,11 @@ function renderEvents() {
 // wywoływane przez app.js przy każdym meldunku (prev = poprzedni meldunek)
 function checkEvents(r, prev) {
   const dev = r.dev || S.tracker, w = who(dev);
+  if (r.sos && !(prev && prev.sos)) addEvent('sos', w + t('SOS z przycisku trackera!'), true, r.t, r.fix ? r : null);
+  if (!r.sos && prev && prev.sos) addEvent('ok', w + t('SOS odwołane'), false, r.t);
+  if (r.ok) addEvent('ok', w + t('OK z przycisku – wszystko w porządku'), false, r.t, r.fix ? r : null);
   if (r.back) addEvent('back', w + t('Kontakt z psem wrócił'), false, r.t, r.fix ? r : null);
+  if (r.sos) return checkZonesOnly(r, dev, w);      // przy SOS bez zdarzeń „szukanie”, bateria itd. – tylko strefy
   if (r.search && !(prev && prev.search)) addEvent('search', w + t('Szukanie włączone (meldunek co 30 s)'), false, r.t);
   if (!r.search && prev && prev.search) addEvent('search', w + t('Szukanie zakończone'), false, r.t);
   if (r.pct != null && r.pct <= LOW_BATT && !(prev && prev.pct != null && prev.pct <= LOW_BATT) && S.battWarn) {
@@ -637,6 +641,11 @@ function checkEvents(r, prev) {
     const v = speedKmh(prevFix, r);
     if (v >= FAST_KMH && v <= JUMP_KMH && r.t - prevFix.t <= 10 * 60000) addEvent('fast', w + tf('Szybki bieg: {v}', { v: fmtSpd(v) }), false, r.t, r);
   }
+  checkZonesOnly(r, dev, w);
+}
+
+function checkZonesOnly(r, dev, w) {
+  if (!r.fix) return;
   let changed = false;
   for (const z of A.zones) {
     if (!z.on) continue;

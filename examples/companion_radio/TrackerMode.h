@@ -72,6 +72,11 @@ private:
   unsigned long _cycle_start = 0, _next_wake = 0, _gps_wake = 0, _fresh_since = 0, _deadline = 0;
   uint32_t _interval_s = 120;
   bool _search = false, _boot_report = true, _config_requested = false, _gps_ever_fixed = false;
+  bool _sos = false;               // SOS: 3 short presses; ends with #STOP (s=0) from the base
+  bool _ok_pending = false;        // 2 short presses: "OK" flag in the next report
+  uint8_t _buzz_pending = 0;       // beeps to play after the cycle (z=N, SOS answered)
+  uint8_t _taps = 0;
+  unsigned long _last_tap = 0;
   uint8_t _attempt = 0;
   uint16_t _misses = 0;
   uint32_t _seq = 0, _msg_ts = 0, _expected_ack = 0;
@@ -80,6 +85,8 @@ private:
 
   // bases
   bool _field_mode = false;   // active base = field base
+  int _field_idx = 0;         // which of the field bases (trk_field "A/B") is in use
+  int _field_tries = 0;       // field bases tried in this cycle
   bool _fallback = false;     // this cycle: the active base did not ACK, trying the other one
   bool _home_check = false;   // this cycle: extra copy to the home base while in field mode
   unsigned long _last_home_check = 0;
@@ -101,11 +108,14 @@ private:
   void composeReport();
   void newMessage();
   bool targetIsField() const { return _home_check ? false : (_field_mode != _fallback); }
-  bool findBase(ContactInfo& dest, bool field);
+  bool findBase(ContactInfo& dest, bool field, int* count = NULL);
+  bool isFieldName(const char* name);
+  int fieldCount() { ContactInfo b; int n = 0; findBase(b, true, &n); return n; }
   bool isBase(const ContactInfo& c);
   void setFieldMode(bool on);
   bool handleButton();
   void gpsPower(bool on);
   void blink(int n);
+  void buzz(int n, int ms);
   void runMesh();
 };
