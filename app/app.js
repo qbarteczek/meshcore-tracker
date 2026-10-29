@@ -2,9 +2,11 @@
 // Łączy się przez Web Bluetooth z companionem MeshCore (firmware TRACKER_BASE), czyta meldunki trackera
 // (czytelne wiadomości od kontaktu trackera) i wysyła polecenia (#SZUKAJ, #STOP, #CO n, #BT, #DOM).
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
+// Widoki jak w Traccarze: mapa z kartą urządzenia, odtwarzanie trasy z raportem, strefa (geofence), zdarzenia.
+// Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-7';
+const VERSION = 'trk2-app-8';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -14,10 +16,16 @@ const RESP = { OK: 0, ERR: 1, CONTACTS_START: 2, CONTACT: 3, END_CONTACTS: 4, SE
   MSG: 7, NO_MORE: 10, DEVICE_INFO: 13, MSG_V3: 16 };
 const PUSH = { ADVERT: 0x80, SEND_CONFIRMED: 0x82, MSG_WAITING: 0x83, NEW_ADVERT: 0x8a };
 
+const MAX_REPORTS = 10000;     // ok. 1 MB w pamięci telefonu; przy meldunku co minutę – prawie tydzień
+const MAX_EVENTS = 500;
+const JUMP_KMH = 80;           // szybsze "przeskoki" to błąd GPS, nie bieg psa – pomijane w dystansie
+const STOP_M = 40, STOP_MS = 5 * 60000;   // postój: 5 min w promieniu 40 m
+
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ------------------------------------------------------------------ stan (zapisany w telefonie)
 
@@ -30,12 +38,19 @@ const S = {
   device: null, rx: null, wantConnected: false, connected: false,
   baseName: '', contacts: new Map(),           // prefix(12 hex) -> {name, lat, lon}
   tracker: store.get('tracker', ''),           // prefix kontaktu trackera
-  reports: store.get('reports', []),           // {t, lat, lon, fix, mv, pct, temp, sats, int, search, text}
+  dogName: store.get('dogname', ''),
+  reports: store.get('reports', []),           // {t, lat, lon, fix, mv, pct, temp, sats, int, search, text, spd, crs}
   myTrail: store.get('mytrail', []),           // [lat, lon, t]
+  events: store.get('events', []),             // {t, type, text, lat?, lon?}
+  geo: store.get('geo', null),                 // {lat, lon, r}
+  geoInside: store.get('geoin', null),
+  battWarn: store.get('battwarn', true), battLow: store.get('battlow', false),
   me: null, heading: null, northUp: store.get('northup', true),
+  tab: store.get('tab', 'map'), follow: store.get('follow', true), evFilter: 'ev', evSeen: store.get('evseen', 0),
   pendingCmd: null,                            // {text, ack, t, button}
-  alarmShown: false, alarmMuted: 0, sound: store.get('sound', true), wake: null,
+  alarmShown: false, alarmMuted: 0, sound: store.get('sound', true), wake: null, lateEvent: false,
   syncing: false, writeChain: Promise.resolve(),
+  rp: { list: [], cum: [], idx: 0, timer: null },
 };
 
 // ------------------------------------------------------------------ Bluetooth
@@ -87,6 +102,7 @@ function onDisconnected() {
   S.rx = null;
   updateConnUI();
   if (!S.wantConnected) return;
+  addEvent('disc', t('Rozłączono z bazą'));
   status(t('Rozłączono z bazą – ponawiam połączenie…'));
   setTimeout(async function retry() {
     if (!S.wantConnected || S.connected) return;
@@ -127,6 +143,7 @@ function onFrame(b) {
     case RESP.SELF_INFO:
       S.baseName = cstr(b.subarray(58));
       status(tf('Połączono z bazą {name}.', { name: S.baseName }));
+      addEvent('conn', tf('Połączono z bazą {name}.', { name: S.baseName }));
       break;
     case RESP.CONTACT: {
       const prefix = hex(b.subarray(1, 7));
@@ -135,6 +152,7 @@ function onFrame(b) {
     }
     case RESP.END_CONTACTS:
       fillTrackerSelect();
+      render();
       break;
     case RESP.MSG_V3:
       onMessage(hex(b.subarray(4, 10)), rdU32(b, 12), dec.decode(b.subarray(16)), b[11]);
@@ -159,6 +177,7 @@ function onFrame(b) {
     case PUSH.SEND_CONFIRMED:
       if (S.pendingCmd && S.pendingCmd.ack === rdU32(b, 1)) {
         cmdStatus(tf('Pies przyjął polecenie „{c}”.', { c: S.pendingCmd.text }));
+        addEvent('cmd', tf('Pies przyjął polecenie „{c}”.', { c: S.pendingCmd.text }));
         if (S.pendingCmd.button) S.pendingCmd.button.classList.remove('pending');
         S.pendingCmd = null;
         if (navigator.vibrate) navigator.vibrate(60);
@@ -191,12 +210,31 @@ function parseReport(text) {
   if (!v && !iv) return null;   // to nie jest meldunek
   r.fix = !!q && !/bez GPS/.test(text) && !/ostatnio:/.test(text);
   if (v) { r.mv = parseInt(v[1], 10) * 1000 + parseInt(v[2].padEnd(3, '0').slice(0, 3), 10); r.pct = parseInt(v[3], 10); }
-  const t = text.match(/(-?\d+)°C/);
-  if (t) r.temp = parseInt(t[1], 10);
+  const tc = text.match(/(-?\d+)°C/);
+  if (tc) r.temp = parseInt(tc[1], 10);
   r.sats = sats ? parseInt(sats[1], 10) : 0;
   r.int = iv ? parseInt(iv[1], 10) : 0;
   r.search = /SZUKANIE/.test(text);
+  r.back = /kontakt wrócił/.test(text);
   return r;
+}
+
+// prędkość (km/h) i kurs z poprzedniej pozycji GPS
+function motion(p, r) {
+  if (!p) return;
+  const dt = (r.t - p.t) / 1000;
+  if (dt <= 0 || dt > 3 * 3600) return;
+  const d = distM(p.lat, p.lon, r.lat, r.lon);
+  r.spd = (d / dt) * 3.6;
+  r.crs = d > 5 ? bearing(p.lat, p.lon, r.lat, r.lon) : p.crs;
+}
+
+function prepReports() {
+  let prev = null;
+  for (const r of S.reports) {
+    if (r.text) r.text = r.text.split('\n')[0];
+    if (r.fix) { if (r.spd == null) motion(prev, r); prev = r; }
+  }
 }
 
 function onMessage(prefix, ts, text) {
@@ -206,23 +244,102 @@ function onMessage(prefix, ts, text) {
   if (prefix !== S.tracker) return;
   const now = Date.now();
   r.t = ts > 1.6e9 && ts * 1000 < now + 120000 ? ts * 1000 : now;   // czas bazy (ustawiany z telefonu)
+  r.text = text.split('\n')[0];
   if (r.alarm) {
-    addLog(r.t, text, true);
-    showAlarm(text.split('\n')[0]);
+    addEvent('alarm', r.text, r.lat != null ? r : null);
+    showAlarm(r.text);
     return;
   }
+  const prev = lastReport();
+  if (r.fix) motion(lastFix(), r);
   S.reports.push(r);
-  if (S.reports.length > 300) S.reports.splice(0, S.reports.length - 300);
+  if (S.reports.length > MAX_REPORTS) S.reports.splice(0, S.reports.length - MAX_REPORTS);
   store.set('reports', S.reports);
-  addLog(r.t, text.split('\n')[0], false);
+  S.lateEvent = false;
+  if (r.back) addEvent('back', t('Kontakt z psem wrócił'), r.fix ? r : null);
+  if (r.search && !(prev && prev.search)) addEvent('search', t('Szukanie włączone (meldunek co 30 s)'));
+  if (!r.search && prev && prev.search) addEvent('search', t('Szukanie zakończone'));
+  checkBattery(r);
+  checkGeo(r);
   hideAlarm();
+  if (S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
   render();
+  if (S.evFilter === 'rep') renderEvents();
 }
 
 function lastReport() { return S.reports.length ? S.reports[S.reports.length - 1] : null; }
 function lastFix() {
   for (let i = S.reports.length - 1; i >= 0; i--) if (S.reports[i].fix) return S.reports[i];
   return null;
+}
+const fixes = () => S.reports.filter((r) => r.fix);
+
+// ------------------------------------------------------------------ zdarzenia, strefa, bateria
+
+const EV_ICON = { alarm: '⚠️', late: '⏱️', geoout: '🚧', geoin: '✅', batt: '🪫', search: '🔍', cmd: '📨',
+  conn: '🔗', disc: '🔌', back: '✅', geoset: '⭕' };
+const EV_ALARM = ['alarm', 'late', 'geoout', 'batt'];
+const EV_GOOD = ['geoin', 'back'];
+
+function addEvent(type, text, pos) {
+  const e = { t: Date.now(), type, text };
+  if (pos && pos.lat != null) { e.lat = pos.lat; e.lon = pos.lon; }
+  S.events.push(e);
+  if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
+  store.set('events', S.events);
+  renderEvents();
+}
+
+function checkBattery(r) {
+  if (r.pct == null) return;
+  if (r.pct <= 20 && !S.battLow) {
+    S.battLow = true;
+    if (S.battWarn) {
+      const msg = tf('Słaba bateria psa: {p}%', { p: r.pct });
+      addEvent('batt', msg);
+      notify(msg);
+    }
+  } else if (r.pct >= 25 && S.battLow) S.battLow = false;
+  store.set('battlow', S.battLow);
+}
+
+function checkGeo(r) {
+  if (!S.geo || !r.fix) return;
+  const d = distM(S.geo.lat, S.geo.lon, r.lat, r.lon);
+  const inside = d <= S.geo.r;
+  if (inside !== S.geoInside) {
+    if (!inside) {
+      const msg = tf('Pies poza strefą: {d} od środka', { d: fmtDist(d) });
+      addEvent('geoout', msg, r);
+      showAlarm(msg);
+    } else if (S.geoInside === false) addEvent('geoin', t('Pies wrócił do strefy'), r);
+  }
+  S.geoInside = inside;
+  store.set('geoin', inside);
+}
+
+function setGeo(center) {
+  if (!center) {
+    S.geo = null; S.geoInside = null;
+    addEvent('geoset', t('Strefa wyłączona'));
+  } else {
+    const r = parseInt($('geo-r').value, 10);
+    S.geo = { lat: center.lat, lon: center.lon, r };
+    S.geoInside = null;
+    addEvent('geoset', tf('Strefa {r} ustawiona', { r: fmtDist(r) }), center);
+    const f = lastFix();
+    if (f) checkGeo(f);
+  }
+  store.set('geo', S.geo); store.set('geoin', S.geoInside);
+  drawGeo();
+  if (S.geo && map) map.fitBounds(geoCircle.getBounds(), { padding: [20, 20] });
+  render();
+}
+
+function notify(text) {
+  if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+    navigator.serviceWorker.ready.then((r) => r.showNotification(t('Tracker psa'), { body: text, tag: 'trk', renotify: true })).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------------ polecenia
@@ -256,7 +373,10 @@ function bearing(a, b, c, d) {
   return (Math.atan2(y, x) / K + 360) % 360;
 }
 const DIRS = ['północ', 'pn.-wsch.', 'wschód', 'pd.-wsch.', 'południe', 'pd.-zach.', 'zachód', 'pn.-zach.'];
-const fmtDist = (m) => m < 1000 ? Math.round(m) + ' m' : num(m / 1000, m < 10000 ? 1 : 0) + ' km';
+const dirName = (br) => t(DIRS[Math.round(br / 45) % 8]);
+const fmtDist = (m) => m < 1000 ? Math.round(m) + ' m'
+  : num(m / 1000, m < 10000 ? 2 : 1).replace(/[.,]?0+$/, '') + ' km';   // 1 km, 1,5 km, 4,01 km
+const fmtSpd = (v) => num(v, v < 10 ? 1 : 0) + ' km/h';
 function dur(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return s + ' s';
@@ -264,6 +384,43 @@ function dur(ms) {
   return Math.floor(s / 3600) + ' h ' + Math.floor((s % 3600) / 60) + ' min';
 }
 function ago(ts) { return tf('{d} temu', { d: dur(Date.now() - ts) }); }
+const hm = (ts) => new Date(ts).toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
+const hms = (ts) => new Date(ts).toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+const when = (ts) => sameDay(ts, Date.now()) ? hm(ts)
+  : new Date(ts).toLocaleDateString(LANG, { day: 'numeric', month: 'short' }) + ' ' + hm(ts);
+const fmtPos = (p) => p.lat.toFixed(5) + ', ' + p.lon.toFixed(5);
+
+// dystans po trasie, z pominięciem przeskoków GPS
+function pathStats(list) {
+  const cum = [0];
+  let dist = 0, move = 0, max = 0, far = 0;
+  for (let i = 1; i < list.length; i++) {
+    const a = list[i - 1], b = list[i];
+    const d = distM(a.lat, a.lon, b.lat, b.lon), dt = (b.t - a.t) / 1000;
+    const v = dt > 0 ? (d / dt) * 3.6 : 0;
+    if (dt > 0 && v <= JUMP_KMH) {
+      dist += d;
+      if (v >= 1.5 && dt <= 15 * 60) move += dt;
+      if (dt <= 10 * 60) max = Math.max(max, v);
+    }
+    cum.push(dist);
+    far = Math.max(far, distM(list[0].lat, list[0].lon, b.lat, b.lon));
+  }
+  return { cum, dist, move, max, far };
+}
+
+function findStops(list) {
+  const out = [];
+  let i = 0;
+  while (i < list.length) {
+    let j = i;
+    while (j + 1 < list.length && distM(list[i].lat, list[i].lon, list[j + 1].lat, list[j + 1].lon) <= STOP_M) j++;
+    if (list[j].t - list[i].t >= STOP_MS) { out.push({ a: i, b: j, t0: list[i].t, t1: list[j].t, lat: list[i].lat, lon: list[i].lon }); i = j + 1; }
+    else i++;
+  }
+  return out;
+}
 
 // ------------------------------------------------------------------ GPS i kompas telefonu
 
@@ -274,7 +431,7 @@ function startSensors() {
       const l = S.myTrail[S.myTrail.length - 1];
       if (!l || distM(l[0], l[1], S.me.lat, S.me.lon) > 15) {
         S.myTrail.push([S.me.lat, S.me.lon, S.me.t]);
-        if (S.myTrail.length > 500) S.myTrail.splice(0, S.myTrail.length - 500);
+        if (S.myTrail.length > 3000) S.myTrail.splice(0, S.myTrail.length - 3000);
         store.set('mytrail', S.myTrail);
       }
       render();
@@ -284,57 +441,253 @@ function startSensors() {
     if (e.absolute === false && e.type !== 'deviceorientationabsolute') return;
     if (e.alpha == null) return;
     S.heading = (360 - e.alpha) % 360;
-    if (!S.northUp) render();
+    if (!S.northUp && S.tab === 'radar') drawRadar();
   };
   window.addEventListener('deviceorientationabsolute', onOri);
 }
 
-// ------------------------------------------------------------------ radar
+// ------------------------------------------------------------------ mapa (Leaflet + OSM)
 
-function render() {
-  const fix = lastFix(), rep = lastReport();
-  // liczby
-  if (fix && S.me) {
-    const d = distM(S.me.lat, S.me.lon, fix.lat, fix.lon), br = bearing(S.me.lat, S.me.lon, fix.lat, fix.lon);
-    $('dist').textContent = fmtDist(d);
-    $('dir').textContent = d < 10 ? t('tuż obok') : t(DIRS[Math.round(br / 45) % 8]) + ' · ' + Math.round(br) + '°';
-  } else if (fix) {
-    $('dist').textContent = '–';
-    $('dir').textContent = S.me ? '' : t('czekam na GPS telefonu');
-  } else {
-    $('dist').textContent = '–';
-    $('dir').textContent = rep ? t('pies bez fixu GPS') : t('brak pozycji');
-  }
-  if (rep) {
-    const late = rep.int && Date.now() - rep.t > (2 * rep.int + 60) * 1000;
-    $('age').textContent = tf('meldunek {a}', { a: ago(rep.t) }) + (fix && fix !== rep ? ' · ' + tf('pozycja {a}', { a: ago(fix.t) }) : '');
-    $('age').classList.toggle('old', !!late);
-    $('s-batt').textContent = rep.mv ? num(rep.mv / 1000, 2) + ' V · ' + rep.pct + '%' : '–';
-    $('s-gps').textContent = rep.fix ? rep.sats + ' sat' : t('brak fixu');
-    $('s-int').textContent = rep.int ? (rep.int < 120 ? rep.int + ' s' : Math.round(rep.int / 60) + ' min') + (rep.search ? ' · ' + t('szukanie') : '') : '–';
-    if (rep.int) {
-      const left = Math.round((rep.t + rep.int * 1000 - Date.now()) / 1000);
-      $('s-next').textContent = left > 0 ? (left < 120 ? left + ' s' : Math.round(left / 60) + ' min')
-        : left > -60 - rep.int ? t('zaraz') : tf('spóźniony {d}', { d: dur(-left * 1000) });
+let map = null, tiles = null, dogMarker = null, meMarker = null, meAcc = null, dogLine = null, myLine = null,
+  dots = null, geoCircle = null, rpLine = null, rpMarker = null, rpStops = null, lastDotsN = -1;
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function pinIcon(cls, crs, label) {
+  const arrow = crs != null ? `<div class="r" style="transform:rotate(${Math.round(crs)}deg)"><div class="a"></div></div>` : '';
+  return L.divIcon({ className: '', iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -14],
+    html: `<div class="pin ${cls}">${arrow}<div class="c"></div>${label ? `<div class="pin-label">${esc(label)}</div>` : ''}</div>` });
+}
+
+function initMap() {
+  if (!window.L) { $('map').textContent = t('Mapa niedostępna.'); return; }
+  const f = lastFix();
+  map = L.map('map', { zoomControl: true, attributionControl: true })
+    .setView(f ? [f.lat, f.lon] : S.me ? [S.me.lat, S.me.lon] : [52.07, 19.48], f || S.me ? 16 : 6);
+  map.attributionControl.setPrefix(false);
+  tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  L.control.scale({ imperial: false }).addTo(map);
+  const dog = cssVar('--dog'), me = cssVar('--me');
+  geoCircle = L.circle([0, 0], { radius: 1, color: cssVar('--geo'), weight: 2, dashArray: '6 6', fillOpacity: 0.06, interactive: false });
+  myLine = L.polyline([], { color: me, weight: 3, opacity: 0.5, dashArray: '4 8', interactive: false }).addTo(map);
+  dogLine = L.polyline([], { color: dog, weight: 4, opacity: 0.75 }).addTo(map);
+  dots = L.layerGroup().addTo(map);
+  meAcc = L.circle([0, 0], { radius: 1, color: me, weight: 1, fillOpacity: 0.1, interactive: false });
+  meMarker = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 3, fillColor: me, fillOpacity: 1 });
+  dogMarker = L.marker([0, 0], { icon: pinIcon('', null), zIndexOffset: 1000 }).bindPopup(() => fixPopup(lastFix(), true));
+  rpLine = L.polyline([], { color: cssVar('--replay'), weight: 4, opacity: 0.85 });
+  rpStops = L.layerGroup();
+  rpMarker = L.marker([0, 0], { icon: pinIcon('rp', null), zIndexOffset: 1100 });
+  map.on('dragstart', () => { if (S.follow && S.tab === 'map') { S.follow = false; store.set('follow', false); followUI(); } });
+  drawGeo();
+}
+
+function fixPopup(f, live) {
+  if (!f) return t('brak pozycji');
+  const rows = [`<b>${esc(dogName())}</b>`, (live ? ago(f.t) + ' · ' : '') + when(f.t)];
+  if (f.spd != null) rows.push(t('Prędkość') + ': ' + fmtSpd(f.spd) + (f.crs != null && f.spd >= 1.5 ? ' · ' + dirName(f.crs) : ''));
+  if (f.pct != null) rows.push(t('Bateria') + ': ' + f.pct + '%' + (f.mv ? ' · ' + num(f.mv / 1000, 2) + ' V' : ''));
+  if (f.sats) rows.push('GPS: ' + f.sats + ' sat');
+  if (S.me) rows.push(t('Od Ciebie') + ': ' + fmtDist(distM(S.me.lat, S.me.lon, f.lat, f.lon)));
+  rows.push(fmtPos(f));
+  return rows.join('<br>');
+}
+
+function drawMap() {
+  if (!map) return;
+  const fx = fixes(), f = fx.length ? fx[fx.length - 1] : null;
+  const live = S.tab !== 'replay';
+  // na żywo: ślad psa z ostatnich 24 h (do 1500 punktów)
+  const since = Date.now() - 24 * 3600e3;
+  const recent = fx.filter((r) => r.t >= since).slice(-1500);
+  dogLine.setLatLngs(live ? recent.map((r) => [r.lat, r.lon]) : []);
+  myLine.setLatLngs(live ? S.myTrail.filter((p) => p[2] >= since).map((p) => [p[0], p[1]]) : []);
+  if (live && recent.length !== lastDotsN) {        // klikane punkty meldunków (ostatnie 150)
+    lastDotsN = recent.length;
+    dots.clearLayers();
+    for (const r of recent.slice(-150, -1)) {
+      L.circleMarker([r.lat, r.lon], { radius: 4, weight: 1, color: '#fff', fillColor: cssVar('--dog'), fillOpacity: 0.8 })
+        .bindPopup(() => fixPopup(r, false)).addTo(dots);
     }
   }
-  // linki do map
-  const p = fix || (rep && rep.lat != null ? rep : null);
-  for (const id of ['map-organic', 'map-google', 'map-geo', 'map-nav']) $(id).classList.toggle('disabled', !p);
-  $('map-none').hidden = !!p;
-  if (p) {
-    // Chrome na Androidzie nie otwiera gołych "geo:" ze strony – adresy "intent:" przekazuje do systemu.
-    // Mapy Google: linki https otwierają aplikację Map (bez internetu też, jeśli mapa jest pobrana).
-    const ll = p.lat.toFixed(6) + ',' + p.lon.toFixed(6);
-    const om = 'https://play.google.com/store/apps/details?id=app.organicmaps';
-    $('map-organic').href = 'intent://map?v=1&ll=' + ll + '&n=Pies#Intent;scheme=om;package=app.organicmaps;'
-      + 'S.browser_fallback_url=' + encodeURIComponent(om) + ';end';
-    $('map-google').href = 'https://www.google.com/maps/search/?api=1&query=' + ll;
-    $('map-geo').href = 'intent:' + ll + '?q=' + ll + '(Pies)#Intent;scheme=geo;action=android.intent.action.VIEW;end';
-    $('map-nav').href = 'https://www.google.com/maps/dir/?api=1&destination=' + ll + '&travelmode=walking';
+  if (!live) { dots.clearLayers(); lastDotsN = -1; }
+  if (f && live) {
+    const st = devState();
+    const key = st + '|' + (f.spd >= 1.5 ? Math.round(f.crs) : '') + '|' + dogName();
+    dogMarker.setLatLng([f.lat, f.lon]);
+    if (key !== dogMarker._key) { dogMarker._key = key; dogMarker.setIcon(pinIcon(st === 'on' ? '' : 'off', f.spd >= 1.5 ? f.crs : null, dogName())); }
+    if (!map.hasLayer(dogMarker)) dogMarker.addTo(map);
+  } else if (map.hasLayer(dogMarker)) dogMarker.remove();
+  if (S.me) {
+    meMarker.setLatLng([S.me.lat, S.me.lon]); meAcc.setLatLng([S.me.lat, S.me.lon]).setRadius(S.me.acc || 1);
+    if (!map.hasLayer(meMarker)) { meAcc.addTo(map); meMarker.addTo(map); }
   }
-  drawRadar();
 }
+
+function drawGeo() {
+  if (!map) return;
+  if (S.geo) { geoCircle.setLatLng([S.geo.lat, S.geo.lon]).setRadius(S.geo.r); if (!map.hasLayer(geoCircle)) geoCircle.addTo(map); }
+  else if (map.hasLayer(geoCircle)) geoCircle.remove();
+}
+
+function centerOn(what) {
+  if (!map) return;
+  const f = S.tab === 'replay' ? S.rp.list[S.rp.idx] : lastFix();
+  if (what === 'dog' && f) map.setView([f.lat, f.lon], Math.max(map.getZoom(), 16));
+  else if (what === 'me' && S.me) map.setView([S.me.lat, S.me.lon], Math.max(map.getZoom(), 16));
+  else if (what === 'all') {
+    const pts = [];
+    if (S.tab === 'replay') S.rp.list.forEach((r) => pts.push([r.lat, r.lon]));
+    else { if (f) pts.push([f.lat, f.lon]); dogLine.getLatLngs().forEach((p) => pts.push(p)); }
+    if (S.me) pts.push([S.me.lat, S.me.lon]);
+    if (S.geo) { const b = geoCircle.getBounds(); pts.push(b.getNorthEast(), b.getSouthWest()); }
+    if (pts.length > 1) map.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
+    else if (pts.length) map.setView(pts[0], 16);
+  }
+}
+
+function followUI() {
+  $('btn-follow').classList.toggle('on', S.follow);
+  $('btn-follow').textContent = S.follow ? t('Śledzę psa') : t('Śledź psa');
+}
+
+// ------------------------------------------------------------------ trasa (odtwarzanie i raport)
+
+function rangeOf(key) {
+  const now = Date.now(), d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const day = d0.getTime();
+  if (key === 'h1') return [now - 3600e3, now + 1];
+  if (key === 'h6') return [now - 6 * 3600e3, now + 1];
+  if (key === 'today') return [day, now + 1];
+  if (key === 'yday') return [day - 864e5, day];
+  if (key.startsWith('d:')) { const a = new Date(key.slice(2) + 'T00:00:00').getTime(); return [a, a + 864e5]; }
+  return [0, now + 1];
+}
+
+function fillDays() {
+  const sel = $('rp-range'), keep = sel.value;
+  sel.querySelectorAll('option[data-day]').forEach((o) => o.remove());
+  const days = [...new Set(fixes().map((r) => { const d = new Date(r.t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }))];
+  for (const d of days.reverse()) {
+    const o = new Option(new Date(d + 'T12:00:00').toLocaleDateString(LANG, { weekday: 'short', day: 'numeric', month: 'long' }), 'd:' + d);
+    o.dataset.day = '1';
+    sel.add(o);
+  }
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : 'today';
+}
+
+function loadReplay(fit) {
+  stopPlay();
+  const [a, b] = rangeOf($('rp-range').value);
+  const list = fixes().filter((r) => r.t >= a && r.t < b);
+  const st = pathStats(list);
+  S.rp.list = list; S.rp.cum = st.cum;
+  $('rp-slider').max = Math.max(0, list.length - 1);
+  $('rp-count').textContent = list.length ? tf('{n} pozycji', { n: list.length }) : '';
+  if (map) {
+    rpLine.setLatLngs(list.map((r) => [r.lat, r.lon]));
+    rpStops.clearLayers();
+  }
+  const stops = findStops(list);
+  // raport
+  const dash = '–';
+  $('r-dist').textContent = list.length > 1 ? fmtDist(st.dist) : dash;
+  $('r-dur').textContent = list.length > 1 ? dur(list[list.length - 1].t - list[0].t) : dash;
+  $('r-move').textContent = list.length > 1 ? dur(st.move * 1000) : dash;
+  $('r-avg').textContent = st.move > 60 ? fmtSpd((st.dist / st.move) * 3.6) : dash;
+  $('r-max').textContent = list.length > 1 ? fmtSpd(st.max) : dash;
+  $('r-far').textContent = list.length > 1 ? fmtDist(st.far) : dash;
+  $('r-stops').textContent = list.length ? stops.length + (stops.length ? ' · ' + dur(stops.reduce((s, x) => s + x.t1 - x.t0, 0)) : '') : dash;
+  const withB = list.filter((r) => r.pct != null);
+  $('r-batt').textContent = withB.length ? withB[0].pct + '% → ' + withB[withB.length - 1].pct + '%' : dash;
+  const ol = $('r-stoplist');
+  ol.textContent = '';
+  for (const s of stops) {
+    const li = document.createElement('li');
+    li.className = 'click';
+    li.innerHTML = `<span class="i">⏸️</span><span class="x">${esc(hm(s.t0) + '–' + hm(s.t1) + ' · ' + dur(s.t1 - s.t0))}</span>`;
+    li.addEventListener('click', () => { setIdx(s.a); if (map) map.setView([s.lat, s.lon], 17); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+    ol.append(li);
+    if (map) L.circleMarker([s.lat, s.lon], { radius: 8, color: cssVar('--replay'), weight: 2, fillColor: '#fff', fillOpacity: 0.9 })
+      .bindPopup(`<b>${esc(t('Postój'))}</b><br>${esc(hm(s.t0) + '–' + hm(s.t1))}<br>${esc(dur(s.t1 - s.t0))}`).addTo(rpStops);
+  }
+  if (!stops.length) ol.innerHTML = `<li><span class="x muted">${esc(t('Brak postojów.'))}</span></li>`;
+  setIdx(list.length ? list.length - 1 : 0);
+  if (fit && map && list.length > 1) map.fitBounds(rpLine.getBounds(), { padding: [30, 30], maxZoom: 17 });
+  else if (fit && map && list.length) map.setView([list[0].lat, list[0].lon], 16);
+}
+
+function setIdx(i) {
+  const list = S.rp.list;
+  S.rp.idx = Math.max(0, Math.min(i, list.length - 1));
+  $('rp-slider').value = S.rp.idx;
+  const r = list[S.rp.idx];
+  if (!r) { $('rp-info').textContent = t('Brak pozycji w tym okresie.'); if (map && map.hasLayer(rpMarker)) rpMarker.remove(); return; }
+  const parts = [`<b>${esc(hms(r.t))}</b>${sameDay(r.t, Date.now()) ? '' : ' · ' + esc(new Date(r.t).toLocaleDateString(LANG))}`,
+    esc(t('od startu') + ' ' + fmtDist(S.rp.cum[S.rp.idx] || 0))];
+  if (r.spd != null) parts.push(esc(fmtSpd(r.spd)));
+  if (r.pct != null) parts.push(esc(t('bateria') + ' ' + r.pct + '%'));
+  parts.push(esc(fmtPos(r)));
+  $('rp-info').innerHTML = parts.join(' · ');
+  if (map && S.tab === 'replay') {
+    rpMarker.setLatLng([r.lat, r.lon]).setIcon(pinIcon('rp', r.spd >= 1.5 ? r.crs : null, hm(r.t)));
+    if (!map.hasLayer(rpMarker)) rpMarker.addTo(map);
+    if (S.rp.timer && !map.getBounds().pad(-0.1).contains([r.lat, r.lon])) map.panTo([r.lat, r.lon]);
+  }
+}
+
+function togglePlay() {
+  if (S.rp.timer) { stopPlay(); return; }
+  if (S.rp.list.length < 2) return;
+  if (S.rp.idx >= S.rp.list.length - 1) setIdx(0);
+  $('rp-play').textContent = '⏸';
+  const step = () => {
+    if (S.rp.idx >= S.rp.list.length - 1) { stopPlay(); return; }
+    setIdx(S.rp.idx + 1);
+  };
+  S.rp.timer = setInterval(step, 1000 / parseInt($('rp-speed').value, 10));
+}
+function stopPlay() { if (S.rp.timer) clearInterval(S.rp.timer); S.rp.timer = null; $('rp-play').textContent = '▶'; }
+
+function replayLayers(on) {
+  if (!map) return;
+  for (const l of [rpLine, rpStops]) { if (on && !map.hasLayer(l)) l.addTo(map); if (!on && map.hasLayer(l)) l.remove(); }
+  if (!on && map.hasLayer(rpMarker)) rpMarker.remove();
+  if (!on) stopPlay();
+}
+
+// eksport (pobieranie pliku działa bez internetu)
+function download(text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+function fileStamp(list) {
+  const d = new Date(list.length ? list[0].t : Date.now()), p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+}
+function exportGpx() {
+  const list = S.rp.list;
+  if (!list.length) return;
+  const pts = list.map((r) => `<trkpt lat="${r.lat.toFixed(6)}" lon="${r.lon.toFixed(6)}"><time>${new Date(r.t).toISOString()}</time>`
+    + (r.spd != null ? `<extensions><speed>${(r.spd / 3.6).toFixed(2)}</speed></extensions>` : '') + '</trkpt>').join('\n');
+  download(`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="tracker-psa ${VERSION}" xmlns="http://www.topografix.com/GPX/1/1">\n`
+    + `<trk><name>${esc(dogName() + ' ' + when(list[0].t))}</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`,
+  'pies-' + fileStamp(list) + '.gpx', 'application/gpx+xml');
+}
+function exportCsv() {
+  const list = S.rp.list;
+  if (!list.length) return;
+  const rows = ['czas;lat;lon;predkosc_kmh;kurs;bateria_proc;bateria_v;temperatura_c;satelity;odstep_s'];
+  for (const r of list) rows.push([new Date(r.t).toISOString(), r.lat.toFixed(6), r.lon.toFixed(6), r.spd != null ? r.spd.toFixed(1) : '',
+    r.crs != null ? Math.round(r.crs) : '', r.pct ?? '', r.mv ? (r.mv / 1000).toFixed(3) : '', r.temp ?? '', r.sats ?? '', r.int ?? ''].join(';'));
+  download(rows.join('\n') + '\n', 'pies-' + fileStamp(list) + '.csv', 'text/csv');
+}
+
+// ------------------------------------------------------------------ radar
 
 function drawRadar() {
   const cv = $('radar'), dpr = window.devicePixelRatio || 1;
@@ -342,17 +695,16 @@ function drawRadar() {
   if (!w) return;
   if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = cv.width; }
   const g = cv.getContext('2d');
-  const css = getComputedStyle(document.documentElement);
-  const col = (n) => css.getPropertyValue(n).trim();
+  const col = cssVar;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, w);
   const c = w / 2, rad = w / 2 - 14;
 
-  const fixes = S.reports.filter((r) => r.fix).slice(-40);
-  const centre = S.me || (fixes.length ? fixes[fixes.length - 1] : null);
+  const fx = fixes().slice(-40);
+  const centre = S.me || (fx.length ? fx[fx.length - 1] : null);
   // skala: najdalszy punkt (pies, ślad) * 1,15, zaokrąglona do 1-2-5
   let far = 50;
-  if (centre) for (const f of fixes) far = Math.max(far, distM(centre.lat, centre.lon, f.lat, f.lon) * 1.15);
+  if (centre) for (const f of fx) far = Math.max(far, distM(centre.lat, centre.lon, f.lat, f.lon) * 1.15);
   const steps = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
   const range = steps.find((s) => s >= far) || far;
   const rot = !S.northUp && S.heading != null ? S.heading * K : 0;   // kierunek patrzenia u góry
@@ -362,7 +714,6 @@ function drawRadar() {
     return [c + (x / range) * rad, c - (y / range) * rad];
   };
 
-  // pierścienie
   g.strokeStyle = col('--ring'); g.lineWidth = 1;
   g.fillStyle = col('--muted'); g.font = '12px system-ui, sans-serif'; g.textAlign = 'left';
   for (let i = 1; i <= 4; i++) {
@@ -370,7 +721,6 @@ function drawRadar() {
   }
   g.fillText(fmtDist(range), c + 4, c - rad + 14);
   g.fillText(fmtDist(range / 2), c + 4, c - rad / 2 + 14);
-  // północ
   const nx = c + Math.sin(rot) * (rad + 2) * -1, ny = c - Math.cos(rot) * (rad + 2);
   g.fillStyle = col('--warn'); g.font = 'bold 13px system-ui, sans-serif'; g.textAlign = 'center';
   g.fillText('N', nx, ny + 5);
@@ -379,30 +729,145 @@ function drawRadar() {
     g.fillText(t('czekam na pozycję'), c, c + 5);
     return;
   }
-  // mój ślad
+  // strefa
+  if (S.geo) {
+    const [gx, gy] = proj(S.geo.lat, S.geo.lon);
+    g.strokeStyle = col('--geo'); g.setLineDash([6, 6]); g.lineWidth = 2;
+    g.beginPath(); g.arc(gx, gy, (S.geo.r / range) * rad, 0, 2 * Math.PI); g.stroke(); g.setLineDash([]);
+  }
   g.strokeStyle = col('--me'); g.globalAlpha = 0.35; g.lineWidth = 2; g.beginPath();
   S.myTrail.slice(-200).forEach(([la, lo], i) => { const [x, y] = proj(la, lo); i ? g.lineTo(x, y) : g.moveTo(x, y); });
   g.stroke(); g.globalAlpha = 1;
-  // ślad psa
   g.fillStyle = col('--trail');
-  fixes.slice(0, -1).forEach((f) => { const [x, y] = proj(f.lat, f.lon); g.beginPath(); g.arc(x, y, 3, 0, 2 * Math.PI); g.fill(); });
-  // pies
-  if (fixes.length) {
-    const f = fixes[fixes.length - 1];
+  fx.slice(0, -1).forEach((f) => { const [x, y] = proj(f.lat, f.lon); g.beginPath(); g.arc(x, y, 3, 0, 2 * Math.PI); g.fill(); });
+  if (fx.length) {
+    const f = fx[fx.length - 1];
     const [x, y] = proj(f.lat, f.lon);
     g.fillStyle = col('--dog'); g.strokeStyle = col('--card'); g.lineWidth = 3;
     g.beginPath(); g.arc(x, y, 9, 0, 2 * Math.PI); g.fill(); g.stroke();
   }
-  // ja
   if (S.me) {
     g.fillStyle = col('--me'); g.strokeStyle = col('--card'); g.lineWidth = 3;
     g.beginPath(); g.arc(c, c, 7, 0, 2 * Math.PI); g.fill(); g.stroke();
-    if (S.heading != null) {          // kierunek, w którym patrzy telefon
+    if (S.heading != null) {
       const a = (S.northUp ? S.heading : 0) * K;
       g.strokeStyle = col('--me'); g.lineWidth = 3; g.beginPath();
       g.moveTo(c, c); g.lineTo(c + Math.sin(a) * 26, c - Math.cos(a) * 26); g.stroke();
     }
   }
+}
+
+// ------------------------------------------------------------------ stan urządzenia i karta
+
+function dogName() {
+  if (S.dogName) return S.dogName;
+  const c = S.contacts.get(S.tracker);
+  return c && c.name ? c.name : t('Pies');
+}
+
+// 'on' = meldunki na czas, 'late' = spóźniony, 'off' = brak danych
+function devState() {
+  const rep = lastReport();
+  if (!rep) return 'off';
+  const late = rep.int && Date.now() - rep.t > (2 * rep.int + 60) * 1000;
+  return late ? 'late' : 'on';
+}
+
+function setText(id, v, cls) {
+  const el = $(id);
+  el.textContent = v;
+  if (cls !== undefined) { el.classList.toggle('bad', cls === 'bad'); el.classList.toggle('good', cls === 'good'); }
+}
+
+function render() {
+  const fix = lastFix(), rep = lastReport();
+  // odległość i kierunek od telefonu
+  let distTxt = '–', dirTxt;
+  if (fix && S.me) {
+    const d = distM(S.me.lat, S.me.lon, fix.lat, fix.lon), br = bearing(S.me.lat, S.me.lon, fix.lat, fix.lon);
+    distTxt = fmtDist(d);
+    dirTxt = d < 10 ? t('tuż obok') : dirName(br) + ' · ' + Math.round(br) + '°';
+  } else if (fix) dirTxt = S.me ? '' : t('czekam na GPS telefonu');
+  else dirTxt = rep ? t('pies bez fixu GPS') : t('brak pozycji');
+  $('dist').textContent = distTxt; $('dir').textContent = dirTxt;
+  setText('a-dist', distTxt); setText('a-dir', fix && S.me ? dirTxt : '–');
+
+  const st = devState();
+  $('d-dot').className = 'dot ' + st;
+  $('d-name').textContent = dogName();
+  $('d-state').textContent = st === 'on' ? t('meldunki na czas') + (S.connected ? '' : ' · ' + t('baza rozłączona'))
+    : st === 'late' ? t('spóźniony meldunek') : t('brak danych');
+  if (rep) {
+    const late = st === 'late';
+    $('age').textContent = tf('meldunek {a}', { a: ago(rep.t) }) + (fix && fix !== rep ? ' · ' + tf('pozycja {a}', { a: ago(fix.t) }) : '');
+    $('age').classList.toggle('old', late);
+    $('d-upd').textContent = ago(rep.t);
+    setText('a-batt', rep.mv ? rep.pct + '% · ' + num(rep.mv / 1000, 2) + ' V' : '–', rep.pct != null && rep.pct <= 20 ? 'bad' : '');
+    setText('a-gps', rep.fix ? rep.sats + ' sat' : t('brak fixu'), rep.fix ? '' : 'bad');
+    setText('a-temp', rep.temp != null ? rep.temp + ' °C' : '–');
+    setText('a-int', rep.int ? (rep.int < 120 ? rep.int + ' s' : Math.round(rep.int / 60) + ' min') + (rep.search ? ' · ' + t('szukanie') : '') : '–');
+    let next = '–';
+    if (rep.int) {
+      const left = Math.round((rep.t + rep.int * 1000 - Date.now()) / 1000);
+      next = left > 0 ? (left < 120 ? left + ' s' : Math.round(left / 60) + ' min')
+        : left > -60 - rep.int ? t('zaraz') : tf('spóźniony {d}', { d: dur(-left * 1000) });
+    }
+    setText('a-next', next, st === 'late' ? 'bad' : '');
+  }
+  setText('a-spd', fix && fix.spd != null ? fmtSpd(fix.spd) + (fix.spd >= 1.5 && fix.crs != null ? ' · ' + dirName(fix.crs) : '') : '–');
+  setText('a-pos', fix ? fmtPos(fix) + ' · ' + hm(fix.t) : '–');
+  if (S.geo && fix) {
+    const d = distM(S.geo.lat, S.geo.lon, fix.lat, fix.lon);
+    setText('a-geo', (d <= S.geo.r ? t('w strefie') : t('POZA strefą')) + ' · ' + fmtDist(d) + ' / ' + fmtDist(S.geo.r), d <= S.geo.r ? 'good' : 'bad');
+  } else setText('a-geo', S.geo ? tf('strefa {r}', { r: fmtDist(S.geo.r) }) : t('wyłączona'), '');
+  const today = fixes().filter((r) => sameDay(r.t, Date.now()));
+  setText('a-today', today.length > 1 ? fmtDist(pathStats(today).dist) : '–');
+
+  // linki do zewnętrznych map
+  const p = fix || (rep && rep.lat != null ? rep : null);
+  for (const id of ['map-organic', 'map-google', 'map-geo', 'map-nav']) $(id).classList.toggle('disabled', !p);
+  $('map-none').hidden = !!p;
+  if (p) {
+    // Chrome na Androidzie nie otwiera gołych "geo:" ze strony – adresy "intent:" przekazuje do systemu.
+    const ll = p.lat.toFixed(6) + ',' + p.lon.toFixed(6);
+    const om = 'https://play.google.com/store/apps/details?id=app.organicmaps';
+    $('map-organic').href = 'intent://map?v=1&ll=' + ll + '&n=Pies#Intent;scheme=om;package=app.organicmaps;'
+      + 'S.browser_fallback_url=' + encodeURIComponent(om) + ';end';
+    $('map-google').href = 'https://www.google.com/maps/search/?api=1&query=' + ll;
+    $('map-geo').href = 'intent:' + ll + '?q=' + ll + '(Pies)#Intent;scheme=geo;action=android.intent.action.VIEW;end';
+    $('map-nav').href = 'https://www.google.com/maps/dir/?api=1&destination=' + ll + '&travelmode=walking';
+  }
+  if (S.tab === 'radar') drawRadar();
+  if (S.tab !== 'replay') drawMap();
+  else if (map && S.me) { meMarker.setLatLng([S.me.lat, S.me.lon]); meAcc.setLatLng([S.me.lat, S.me.lon]).setRadius(S.me.acc || 1); }
+}
+
+// ------------------------------------------------------------------ zdarzenia (lista)
+
+function renderEvents() {
+  const ol = $('ev-list');
+  ol.textContent = '';
+  let items;
+  if (S.evFilter === 'rep') {
+    items = S.reports.slice(-200).reverse().map((r) => ({ t: r.t, icon: r.fix ? '📍' : '❔', text: r.text || '', lat: r.fix ? r.lat : null, lon: r.lon, cls: '' }));
+  } else {
+    items = S.events.filter((e) => S.evFilter === 'ev' || EV_ALARM.includes(e.type)).slice(-300).reverse()
+      .map((e) => ({ t: e.t, icon: EV_ICON[e.type] || '•', text: e.text, lat: e.lat, lon: e.lon,
+        cls: EV_ALARM.includes(e.type) ? 'warn' : EV_GOOD.includes(e.type) ? 'good' : '' }));
+  }
+  for (const it of items) {
+    const li = document.createElement('li');
+    li.className = it.cls + (it.lat != null ? ' click' : '');
+    li.innerHTML = `<span class="i">${it.icon}</span><span class="x">${esc(it.text)}</span><time>${esc(when(it.t))}</time>`;
+    if (it.lat != null) li.addEventListener('click', () => { showTab('map'); S.follow = false; followUI(); if (map) map.setView([it.lat, it.lon], 17); });
+    ol.append(li);
+  }
+  $('ev-empty').hidden = items.length > 0;
+  // licznik nowych alarmów na zakładce
+  const unseen = S.events.filter((e) => e.t > S.evSeen && EV_ALARM.includes(e.type)).length;
+  const badge = $('ev-badge');
+  if (S.tab === 'events') { S.evSeen = Date.now(); store.set('evseen', S.evSeen); badge.hidden = true; }
+  else { badge.hidden = !unseen; badge.textContent = unseen > 9 ? '9+' : unseen; }
 }
 
 // ------------------------------------------------------------------ alarm
@@ -423,9 +888,7 @@ function showAlarm(text) {
   $('alarm').hidden = false;
   if (S.alarmMuted > Date.now()) return;
   if (S.sound) { beep(); if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); }
-  if (!S.alarmShown && 'Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
-    navigator.serviceWorker.ready.then((r) => r.showNotification(t('Tracker psa'), { body: text, tag: 'alarm', renotify: true })).catch(() => {});
-  }
+  if (!S.alarmShown) notify(text);
   S.alarmShown = true;
 }
 function hideAlarm() { $('alarm').hidden = true; S.alarmShown = false; }
@@ -438,15 +901,17 @@ function checkLate() {
     const mins = Math.round((Date.now() - rep.t) / 60000);
     if ($('alarm').hidden || (Math.floor(late / 60000) !== S.lastLateMin)) {
       S.lastLateMin = Math.floor(late / 60000);
-      showAlarm(tf('Brak meldunku od {n} min', { n: mins }) + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
+      const msg = tf('Brak meldunku od {n} min', { n: mins });
+      if (!S.lateEvent) { S.lateEvent = true; addEvent('late', msg, lastFix()); }
+      showAlarm(msg + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
     }
   }
 }
 
 // ------------------------------------------------------------------ interfejs
 
-function status(t) { $('ble-status').textContent = t; }
-function cmdStatus(t) { $('cmd-status').textContent = t; }
+function status(s) { $('ble-status').textContent = s; }
+function cmdStatus(s) { $('cmd-status').textContent = s; }
 
 function updateConnUI() {
   const b = $('btn-connect');
@@ -455,23 +920,41 @@ function updateConnUI() {
   if (!S.connected && !S.wantConnected) status(t('Nie połączono.'));
 }
 
-function addLog(t, text, warn) {
-  const li = document.createElement('li');
-  if (warn) li.className = 'warn';
-  const tm = document.createElement('time');
-  tm.textContent = new Date(t).toLocaleTimeString(LANG, { hour: '2-digit', minute: '2-digit' });
-  li.append(tm, document.createTextNode(text));
-  $('log').prepend(li);
-  while ($('log').children.length > 60) $('log').lastChild.remove();
-}
-
 function fillTrackerSelect() {
   const sel = $('sel-tracker');
   sel.textContent = '';
-  const none = new Option(t('– wybierz –'), '');
-  sel.add(none);
+  sel.add(new Option(t('– wybierz –'), ''));
   for (const [p, c] of S.contacts) sel.add(new Option(c.name || p, p, false, p === S.tracker));
   if (S.tracker && !S.contacts.has(S.tracker)) sel.add(new Option('tracker ' + S.tracker, S.tracker, false, true));
+}
+
+function showTab(tab) {
+  const prev = S.tab;
+  S.tab = tab; store.set('tab', tab);
+  document.body.dataset.tab = tab;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  if (map) {
+    setTimeout(() => map.invalidateSize(), 0);
+    replayLayers(tab === 'replay');
+  }
+  if (tab === 'replay') { fillDays(); loadReplay(prev !== 'replay'); }
+  if (tab === 'events') renderEvents();
+  if (tab === 'settings') dataInfo();
+  render();
+  if (prev === 'replay' && tab === 'map' && map) { lastDotsN = -1; drawMap(); }
+}
+
+async function dataInfo() {
+  const kb = Math.round(((localStorage.getItem('trk.reports') || '').length + (localStorage.getItem('trk.events') || '').length
+    + (localStorage.getItem('trk.mytrail') || '').length) / 1024);
+  const fx = fixes();
+  $('data-info').textContent = tf('W telefonie: {n} meldunków, {e} zdarzeń, ok. {kb} kB.', { n: S.reports.length, e: S.events.length, kb })
+    + (fx.length ? ' ' + tf('Od {d}.', { d: when(fx[0].t) }) : '');
+  try {
+    const c = await caches.open('tracker-psa-tiles');
+    const n = (await c.keys()).length;
+    $('tile-count').textContent = tf('Zapisane fragmenty mapy: {n}.', { n });
+  } catch { $('tile-count').textContent = ''; }
 }
 
 async function toggleWake() {
@@ -486,18 +969,31 @@ async function toggleWake() {
   $('btn-wake').textContent = S.wake ? t('Ekran: zawsze włączony') : t('Ekran: zwykły');
 }
 
-// pokaz bez urządzeń: index.html#demo (nic nie zapisuje)
+// pokaz bez urządzeń: index.html#demo (nic nie zapisuje) – spacer 2 h z postojem i strefą
 function demo() {
   store.set = () => {};
-  const now = Date.now(), lat0 = 52.2297, lon0 = 21.0122;
-  S.me = { lat: lat0, lon: lon0, acc: 5, t: now };
+  const now = Date.now(), lat0 = 52.2297, lon0 = 21.0122, n = 60;
+  S.me = { lat: lat0 + 0.004, lon: lon0 + 0.006, acc: 8, t: now };
   S.heading = 30;
-  S.reports = Array.from({ length: 12 }, (_, i) => {
-    const lat = lat0 + 0.0009 * i + 0.0003 * Math.sin(i), lon = lon0 + 0.0011 * i;
-    return { t: now - (12 - i) * 60000, lat, lon, fix: true, mv: 4050 - i * 5, pct: 84, temp: 14, sats: 9, int: 60,
-      search: false, text: fmtDist(distM(lat0, lon0, lat, lon)) + ' · 4,05 V 84% · 14°C · 9 sat · co 60 s' };
-  });
-  S.myTrail = Array.from({ length: 20 }, (_, i) => [lat0 - 0.0002 * (20 - i), lon0 - 0.0003 * (20 - i), now]);
+  S.reports = [];
+  for (let i = 0; i < n; i++) {
+    const k = i < 25 ? i : i < 33 ? 25 + (i - 25) * 0.03 : i - 7;   // postój w środku spaceru
+    const lat = lat0 + 0.00055 * k + 0.0004 * Math.sin(k / 3), lon = lon0 + 0.0007 * k + 0.0003 * Math.cos(k / 4);
+    const r = { t: now - (n - i) * 120000, lat, lon, fix: true, mv: 4080 - i * 4, pct: 88 - Math.round(i / 3), temp: 14, sats: 9,
+      int: 120, search: false };
+    r.text = fmtDist(distM(lat0, lon0, lat, lon)) + ' · ' + num(r.mv / 1000, 2) + ' V ' + r.pct + '% · 14°C · 9 sat · co 120 s';
+    S.reports.push(r);
+  }
+  prepReports();
+  S.myTrail = Array.from({ length: 40 }, (_, i) => [lat0 + 0.0001 * i, lon0 + 0.00015 * i, now - (40 - i) * 180000]);
+  S.geo = { lat: lat0 + 0.006, lon: lon0 + 0.008, r: 1000 };
+  S.geoInside = true;
+  S.events = [
+    { t: now - 125 * 60000, type: 'conn', text: tf('Połączono z bazą {name}.', { name: 'BAZA2' }) },
+    { t: now - 119 * 60000, type: 'geoset', text: tf('Strefa {r} ustawiona', { r: fmtDist(1000) }), lat: S.geo.lat, lon: S.geo.lon },
+    { t: now - 70 * 60000, type: 'late', text: tf('Brak meldunku od {n} min', { n: 6 }) },
+    { t: now - 64 * 60000, type: 'back', text: t('Kontakt z psem wrócił') },
+  ];
   status(t('Pokaz (dane przykładowe).'));
 }
 
@@ -515,7 +1011,7 @@ function init() {
   $('btn-orient').addEventListener('click', () => {
     S.northUp = !S.northUp; store.set('northup', S.northUp);
     $('btn-orient').textContent = S.northUp ? t('Północ u góry') : t('Kierunek patrzenia u góry');
-    render();
+    drawRadar();
   });
   $('btn-orient').textContent = S.northUp ? t('Północ u góry') : t('Kierunek patrzenia u góry');
   $('btn-wake').addEventListener('click', toggleWake);
@@ -523,26 +1019,71 @@ function init() {
     if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
     sendCommand(b.dataset.cmd, b);
   }));
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  document.querySelectorAll('.ev-filter .chip').forEach((b) => b.addEventListener('click', () => {
+    S.evFilter = b.dataset.f;
+    document.querySelectorAll('.ev-filter .chip').forEach((x) => x.classList.toggle('on', x === b));
+    renderEvents();
+  }));
+  // mapa
+  $('btn-c-dog').addEventListener('click', () => centerOn('dog'));
+  $('btn-c-me').addEventListener('click', () => centerOn('me'));
+  $('btn-c-all').addEventListener('click', () => centerOn('all'));
+  $('btn-follow').addEventListener('click', () => {
+    S.follow = !S.follow; store.set('follow', S.follow); followUI();
+    if (S.follow) centerOn('dog');
+  });
+  // strefa
+  if (S.geo) $('geo-r').value = String(S.geo.r);
+  $('geo-me').addEventListener('click', () => (S.me ? setGeo(S.me) : alert(t('Brak pozycji GPS telefonu.'))));
+  $('geo-dog').addEventListener('click', () => { const f = lastFix(); f ? setGeo(f) : alert(t('Brak pozycji psa.')); });
+  $('geo-map').addEventListener('click', () => { if (map) { const c = map.getCenter(); setGeo({ lat: c.lat, lon: c.lng }); } });
+  $('geo-off').addEventListener('click', () => setGeo(null));
+  $('geo-r').addEventListener('change', () => { if (S.geo) setGeo(S.geo); });
+  // trasa
+  $('rp-range').addEventListener('change', () => loadReplay(true));
+  $('rp-slider').addEventListener('input', (e) => { stopPlay(); setIdx(parseInt(e.target.value, 10)); });
+  $('rp-play').addEventListener('click', togglePlay);
+  $('rp-speed').addEventListener('change', () => { if (S.rp.timer) { stopPlay(); togglePlay(); } });
+  $('rp-gpx').addEventListener('click', exportGpx);
+  $('rp-csv').addEventListener('click', exportCsv);
+  // ustawienia
   $('sel-tracker').addEventListener('change', (e) => { S.tracker = e.target.value; store.set('tracker', S.tracker); render(); });
+  $('inp-name').value = S.dogName;
+  $('inp-name').placeholder = t('Pies');
+  $('inp-name').addEventListener('change', (e) => { S.dogName = e.target.value.trim(); store.set('dogname', S.dogName); render(); });
   $('chk-sound').checked = S.sound;
   $('chk-sound').addEventListener('change', (e) => { S.sound = e.target.checked; store.set('sound', S.sound); });
+  $('chk-batt').checked = S.battWarn;
+  $('chk-batt').addEventListener('change', (e) => { S.battWarn = e.target.checked; store.set('battwarn', S.battWarn); });
   $('btn-notif').addEventListener('click', async () => {
     if ('Notification' in window) $('btn-notif').textContent = t('Powiadomienia:') + ' ' + await Notification.requestPermission();
   });
+  $('btn-tiles-clear').addEventListener('click', async () => {
+    if (!confirm(t('Usunąć zapisane fragmenty mapy? Bez internetu mapa będzie pusta.'))) return;
+    try { await caches.delete('tracker-psa-tiles'); } catch { /* */ }
+    dataInfo();
+  });
   $('btn-clear').addEventListener('click', () => {
-    if (!confirm(t('Usunąć zapisane meldunki i ślad?'))) return;
-    S.reports = []; S.myTrail = []; store.set('reports', []); store.set('mytrail', []);
-    $('log').textContent = ''; render();
+    if (!confirm(t('Usunąć zapisane meldunki, ślad i zdarzenia?'))) return;
+    S.reports = []; S.myTrail = []; S.events = [];
+    store.set('reports', []); store.set('mytrail', []); store.set('events', []);
+    lastDotsN = -1; renderEvents(); render(); dataInfo();
   });
   if (location.hash === '#demo') demo();
-  for (const r of S.reports.slice(-30)) addLog(r.t, r.text.split('\n')[0], false);
+  prepReports();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && S.wake === null && S.wakeWanted) toggleWake();
   });
-  window.addEventListener('resize', drawRadar);
+  window.addEventListener('resize', () => { if (S.tab === 'radar') drawRadar(); });
+  initMap();
+  followUI();
   startSensors();
-  setInterval(() => { render(); checkLate(); }, 5000);
-  render();
+  const startTab = ['map', 'replay', 'radar', 'events', 'settings'].includes(S.tab) ? S.tab : 'map';
+  S.tab = '';
+  showTab(startTab);
+  renderEvents();
+  setInterval(() => { if (S.tab !== 'replay') render(); checkLate(); }, 5000);
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
     let reloaded = false;

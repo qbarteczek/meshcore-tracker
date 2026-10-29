@@ -138,9 +138,12 @@ TRK1 (pies) ── LoRa, zero-hop ──► BAZA2 (kieszeń/plecak) ── Bluet
 ```
 
 Na Androidzie zamiast aplikacji MeshCore można użyć **[aplikacji „Tracker psa”](app/)** w Chrome
-(<https://qbart.waw.pl/tracker/>): radar z psem względem telefonu (GPS i kompas telefonu – odległość i kierunek
-działają nawet wtedy, gdy baza nie ma GPS), przyciski zamiast wpisywania poleceń, alarm z dźwiękiem i wibracją.
-Po pierwszym otwarciu działa bez internetu. Telefon łączy się przez Bluetooth z jedną aplikacją naraz – albo ta
+(<https://qbart.waw.pl/tracker/>). Układ jest wzorowany na Traccarze, ale działa bez serwera i bez internetu:
+mapa OpenStreetMap z psem, jego śladem i kartą stanu (bateria, prędkość, GPS, czas meldunku), odtwarzanie trasy
+z raportem (dystans, czas w ruchu, prędkości, postoje) i zapisem GPX/CSV, strefa bezpieczna z alarmem (jak
+geofence), lista zdarzeń, radar z psem względem telefonu (GPS i kompas telefonu – odległość i kierunek działają
+nawet wtedy, gdy baza nie ma GPS), przyciski zamiast wpisywania poleceń, alarm z dźwiękiem i wibracją.
+Po pierwszym otwarciu działa bez internetu; mapa pokazuje fragmenty obejrzane wcześniej z internetem. Telefon łączy się przez Bluetooth z jedną aplikacją naraz – albo ta
 strona, albo aplikacja MeshCore.
 
 ### Przygotowanie (raz, w domu)
@@ -194,7 +197,8 @@ strona, albo aplikacja MeshCore.
 - **Powiadomienia**: włącz powiadomienia aplikacji MeshCore i wyłącz dla niej oszczędzanie baterii (Android),
   inaczej system może zerwać połączenie Bluetooth w tle i alarm przyjdzie dopiero po otwarciu aplikacji.
 - **Mapa offline**: podkład mapy w aplikacji MeshCore pobiera się z internetu. Bez zasięgu ściągnij wcześniej
-  obszar w Google Maps lub OsmAnd – link z meldunku otworzy się wtedy także offline.
+  obszar w Google Maps lub OsmAnd – link z meldunku otworzy się wtedy także offline. W aplikacji „Tracker psa”
+  przed wyjazdem obejrzyj okolicę na mapie w kilku powiększeniach – obejrzane fragmenty zostają w telefonie.
 - **Zasięg**: zero-hop między psem a bazą to zwykle kilkaset metrów do kilku km w terenie otwartym, w lesie
   i za wzgórzem dużo mniej. Gdy w okolicy są repeatery, `#SZUKAJ` pozwala ostatniej próbie meldunku pójść
   przez nie (flood).

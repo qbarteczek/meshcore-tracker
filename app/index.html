@@ -7,9 +7,10 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="vendor/leaflet.css?v=8">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
-<body>
+<body data-tab="map">
 <header class="bar">
   <div class="title">Tracker psa</div>
   <button id="btn-connect" class="pill" type="button">Połącz z bazą</button>
@@ -22,7 +23,117 @@
 </div>
 
 <main>
-  <section class="radar-card">
+  <!-- mapa: wspólna dla zakładek Mapa i Trasa -->
+  <section id="map-wrap" class="map-wrap view-map view-replay">
+    <div id="map" aria-label="Mapa"></div>
+    <div class="map-tools">
+      <button id="btn-c-dog" class="fab" type="button" title="Pokaż psa">🐕</button>
+      <button id="btn-c-me" class="fab" type="button" title="Pokaż mnie">📍</button>
+      <button id="btn-c-all" class="fab" type="button" title="Pokaż wszystko">⤢</button>
+      <button id="btn-follow" class="fab wide" type="button">Śledź psa</button>
+    </div>
+  </section>
+
+  <!-- ================= Mapa: karta psa, polecenia, strefa ================= -->
+  <section class="device view-map">
+    <div class="dev-head">
+      <span id="d-dot" class="dot"></span>
+      <div class="dev-name"><b id="d-name">Pies</b><span id="d-state" class="muted">brak danych</span></div>
+      <span id="d-upd" class="dev-upd">–</span>
+    </div>
+    <dl class="attrs">
+      <div><dt>Odległość</dt><dd id="a-dist">–</dd></div>
+      <div><dt>Kierunek</dt><dd id="a-dir">–</dd></div>
+      <div><dt>Prędkość</dt><dd id="a-spd">–</dd></div>
+      <div><dt>Bateria</dt><dd id="a-batt">–</dd></div>
+      <div><dt>GPS</dt><dd id="a-gps">–</dd></div>
+      <div><dt>Temperatura</dt><dd id="a-temp">–</dd></div>
+      <div><dt>Meldunek co</dt><dd id="a-int">–</dd></div>
+      <div><dt>Następny za</dt><dd id="a-next">–</dd></div>
+      <div><dt>Strefa</dt><dd id="a-geo">wyłączona</dd></div>
+      <div><dt>Dziś przebiegł</dt><dd id="a-today">–</dd></div>
+      <div class="wide"><dt>Pozycja</dt><dd id="a-pos">–</dd></div>
+    </dl>
+  </section>
+
+  <section class="cmds view-map">
+    <h2>Polecenia</h2>
+    <div class="cmd-grid">
+      <button class="cmd big search" data-cmd="#SZUKAJ" type="button">Szukaj<small>meldunek co 30 s</small></button>
+      <button class="cmd big found" data-cmd="#STOP" type="button">Znaleziony<small>koniec szukania</small></button>
+      <button class="cmd" data-cmd="#CO 60" type="button">Co 1 min</button>
+      <button class="cmd" data-cmd="#CO 120" type="button">Co 2 min</button>
+      <button class="cmd" data-cmd="#CO 300" type="button">Co 5 min</button>
+      <button class="cmd" data-cmd="#BT" type="button">Bluetooth psa<small>10 min</small></button>
+      <button class="cmd home" data-cmd="#DOM" data-confirm="Zakończyć wędrówkę? Tracker wróci do bazy domowej." type="button">Koniec wędrówki</button>
+    </div>
+    <div id="cmd-status" class="cmd-status">Polecenie dojdzie do psa przy jego najbliższym meldunku.</div>
+  </section>
+
+  <section class="geo view-map">
+    <h2>Strefa bezpieczna</h2>
+    <p class="hint">Alarm, gdy pies wyjdzie poza okrąg (jak strefy w Traccarze). Środek: Ty, pies albo środek mapy (np. obóz).</p>
+    <label class="inline">Promień
+      <select id="geo-r">
+        <option value="100">100 m</option><option value="200">200 m</option><option value="300" selected>300 m</option>
+        <option value="500">500 m</option><option value="1000">1 km</option><option value="2000">2 km</option>
+      </select>
+    </label>
+    <div class="row-btns">
+      <button id="geo-me" type="button">Wokół mnie</button>
+      <button id="geo-dog" type="button">Wokół psa</button>
+      <button id="geo-map" type="button">Środek mapy</button>
+      <button id="geo-off" type="button">Wyłącz</button>
+    </div>
+  </section>
+
+  <!-- ================= Trasa: odtwarzanie i raport ================= -->
+  <section class="replay view-replay">
+    <div class="rp-top">
+      <label class="inline">Okres
+        <select id="rp-range">
+          <option value="h1">Ostatnia godzina</option>
+          <option value="h6">Ostatnie 6 h</option>
+          <option value="today" selected>Dziś</option>
+          <option value="yday">Wczoraj</option>
+          <option value="all">Cała historia</option>
+        </select>
+      </label>
+      <span id="rp-count" class="muted"></span>
+    </div>
+    <div class="rp-player">
+      <button id="rp-play" class="pill" type="button">▶</button>
+      <input id="rp-slider" type="range" min="0" max="0" value="0" aria-label="Pozycja na trasie">
+      <select id="rp-speed" aria-label="Szybkość odtwarzania">
+        <option value="1">1×</option><option value="3" selected>3×</option><option value="10">10×</option><option value="30">30×</option>
+      </select>
+    </div>
+    <div id="rp-info" class="rp-info">Brak pozycji w tym okresie.</div>
+  </section>
+
+  <section class="report view-replay">
+    <h2>Raport trasy</h2>
+    <dl class="attrs">
+      <div><dt>Dystans</dt><dd id="r-dist">–</dd></div>
+      <div><dt>Czas</dt><dd id="r-dur">–</dd></div>
+      <div><dt>W ruchu</dt><dd id="r-move">–</dd></div>
+      <div><dt>Średnia w ruchu</dt><dd id="r-avg">–</dd></div>
+      <div><dt>Najszybciej</dt><dd id="r-max">–</dd></div>
+      <div><dt>Najdalej od startu</dt><dd id="r-far">–</dd></div>
+      <div><dt>Postoje</dt><dd id="r-stops">–</dd></div>
+      <div><dt>Bateria</dt><dd id="r-batt">–</dd></div>
+    </dl>
+    <h3>Postoje (co najmniej 5 min)</h3>
+    <ol id="r-stoplist" class="list"></ol>
+    <div class="row-btns">
+      <button id="rp-gpx" type="button">Zapisz GPX</button>
+      <button id="rp-csv" type="button">Zapisz CSV</button>
+    </div>
+    <p class="hint">GPX otworzysz w Organic Maps, OsmAnd, Mapach Google (Moje mapy) albo zaimportujesz później do innych programów.</p>
+  </section>
+
+  <!-- ================= Radar ================= -->
+  <section class="radar-card view-radar">
     <canvas id="radar" aria-label="Radar: pies względem telefonu"></canvas>
     <div class="radar-info">
       <div id="dist" class="dist">–</div>
@@ -35,25 +146,7 @@
     </div>
   </section>
 
-  <section class="stats">
-    <div class="stat"><span class="k">Bateria psa</span><span id="s-batt" class="v">–</span></div>
-    <div class="stat"><span class="k">GPS psa</span><span id="s-gps" class="v">–</span></div>
-    <div class="stat"><span class="k">Meldunek co</span><span id="s-int" class="v">–</span></div>
-    <div class="stat"><span class="k">Następny za</span><span id="s-next" class="v">–</span></div>
-  </section>
-
-  <section class="cmds">
-    <button class="cmd big search" data-cmd="#SZUKAJ" type="button">Szukaj<small>meldunek co 30 s</small></button>
-    <button class="cmd big found" data-cmd="#STOP" type="button">Znaleziony<small>koniec szukania</small></button>
-    <button class="cmd" data-cmd="#CO 60" type="button">Co 1 min</button>
-    <button class="cmd" data-cmd="#CO 120" type="button">Co 2 min</button>
-    <button class="cmd" data-cmd="#CO 300" type="button">Co 5 min</button>
-    <button class="cmd" data-cmd="#BT" type="button">Bluetooth psa<small>10 min</small></button>
-    <button class="cmd home" data-cmd="#DOM" data-confirm="Zakończyć wędrówkę? Tracker wróci do bazy domowej." type="button">Koniec wędrówki</button>
-  </section>
-  <div id="cmd-status" class="cmd-status">Polecenie dojdzie do psa przy jego najbliższym meldunku.</div>
-
-  <section class="maps">
+  <section class="maps view-radar">
     <a id="map-organic" class="mapbtn" href="#">Organic Maps</a>
     <a id="map-google" class="mapbtn" href="#">Mapy Google</a>
     <a id="map-geo" class="mapbtn" href="#">Inna mapa</a>
@@ -61,32 +154,62 @@
     <div id="map-none" class="map-none">Mapy będą dostępne po pierwszej pozycji GPS psa (w budynku tracker zwykle jej nie łapie).</div>
   </section>
 
-  <section class="log">
-    <h2>Meldunki</h2>
-    <ol id="log"></ol>
+  <!-- ================= Zdarzenia ================= -->
+  <section class="events view-events">
+    <div class="ev-filter" role="group">
+      <button class="chip on" data-f="ev" type="button">Zdarzenia</button>
+      <button class="chip" data-f="alarm" type="button">Alarmy</button>
+      <button class="chip" data-f="rep" type="button">Meldunki</button>
+    </div>
+    <ol id="ev-list" class="list"></ol>
+    <p id="ev-empty" class="hint">Brak zdarzeń.</p>
   </section>
 
-  <details class="settings">
-    <summary>Ustawienia</summary>
+  <!-- ================= Ustawienia ================= -->
+  <section class="settings view-settings">
+    <h2>Ustawienia</h2>
     <label>Tracker (kontakt)
       <select id="sel-tracker"><option value="">– wybierz po połączeniu –</option></select>
+    </label>
+    <label>Nazwa psa na mapie
+      <input id="inp-name" type="text" maxlength="24" placeholder="Pies">
     </label>
     <label>Język
       <select id="sel-lang"></select>
     </label>
     <label class="row"><input id="chk-sound" type="checkbox" checked> Dźwięk i wibracja alarmu</label>
+    <label class="row"><input id="chk-batt" type="checkbox" checked> Ostrzegaj o słabej baterii psa (20%)</label>
     <button id="btn-notif" type="button">Zezwól na powiadomienia</button>
-    <button id="btn-clear" type="button">Wyczyść ślad i meldunki</button>
+
+    <h3>Mapa offline</h3>
+    <p class="hint">Podkład mapy pochodzi z OpenStreetMap. Każdy obejrzany fragment mapy zostaje w telefonie: przed wyjazdem,
+      z internetem, przejrzyj okolicę wędrówki w kilku powiększeniach (ogólnie i z bliska). Bez internetu
+      mapa pokaże zapisane fragmenty, a trasa psa i strefa rysują się zawsze, także na pustym tle.</p>
+    <p class="hint" id="tile-count"></p>
+    <button id="btn-tiles-clear" type="button">Usuń zapisaną mapę</button>
+
+    <h3>Dane</h3>
+    <p class="hint" id="data-info"></p>
+    <button id="btn-clear" type="button">Wyczyść ślad, meldunki i zdarzenia</button>
     <p class="hint">Telefon może być połączony przez Bluetooth tylko z jedną aplikacją: na czas korzystania
       z tej strony rozłącz aplikację MeshCore. Strona działa bez internetu po pierwszym otwarciu
       (menu Chrome → „Dodaj do ekranu głównego”). Mapy Google i OsmAnd działają offline, jeśli pobrałeś
       wcześniej mapę obszaru.</p>
     <p class="hint">Bezpieczeństwo: zmień domyślny PIN Bluetooth bazy i trackera (123456) na własny – w aplikacji
-      MeshCore, w ustawieniach urządzenia. Ta strona nie wysyła niczego do internetu.</p>
+      MeshCore, w ustawieniach urządzenia. Strona nie wysyła danych psa do internetu; pobiera tylko kafelki mapy.</p>
     <p class="hint" id="ver"></p>
-  </details>
+  </section>
 </main>
-<script src="lang.js?v=7"></script>
-<script src="app.js?v=7"></script>
+
+<nav class="tabs" aria-label="Widoki">
+  <button data-tab="map" type="button"><span>🗺️</span>Mapa</button>
+  <button data-tab="replay" type="button"><span>🧭</span>Trasa</button>
+  <button data-tab="radar" type="button"><span>📡</span>Radar</button>
+  <button data-tab="events" type="button"><span>🔔</span>Zdarzenia<i id="ev-badge" hidden></i></button>
+  <button data-tab="settings" type="button"><span>⚙️</span>Ustawienia</button>
+</nav>
+<script src="vendor/leaflet.js?v=8"></script>
+<script src="lang.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
