@@ -29,6 +29,17 @@ Układ jak w Traccarze (dolne zakładki), wszystko w telefonie, bez serwera:
 - przyciski **Organic Maps / Mapy Google / Inna mapa / Prowadź pieszo** (w zakładce Radar) – pozycja psa w aplikacji mapowej (offline
   działa, jeśli wcześniej pobrałeś mapę obszaru); aktywne po pierwszej pozycji GPS psa,
 
+- **jak w Traccarze także** (`narzedzia.js`): przełącznik podkładu (mapa OSM, turystyczna z poziomicami OpenTopoMap,
+  satelita Esri – każda zapisuje obejrzane fragmenty offline), **kilka trackerów naraz** (lista z statusem, szare
+  znaczniki pozostałych, dotknięcie = wybór; karta, polecenia i trasa dotyczą wybranego), **strefy rysowane palcem**
+  na mapie (wielokąty) obok okręgów, **punkty** (auto, obóz, dom…) z odległością psa i Twoją, **miarka** na mapie,
+  **udostępnianie pozycji** (systemowe „Udostępnij” albo SMS – działa bez internetu), **reguły powiadomień**
+  (dla każdego rodzaju zdarzenia: alarm z dźwiękiem / powiadomienie / tylko zapis), okres trasy **od–do**,
+  **raport dni** (tabela 31 dni: dystans, w ruchu, prędkość, postoje, bateria) i **licznik km**,
+- **układ zależny od ekranu**: telefon w pionie – wszystko jedno pod drugim, zakładki na dole; telefon w poziomie
+  i komputer – zakładki z boku, mapa na całą wysokość po lewej, panele w kolumnie po prawej; zakładki bez mapy
+  (Radar, Zdarzenia, Ustawienia) rozkładają karty w siatce na całą szerokość.
+
 Analizy (`analiza.js`) są wzorowane na raportach Traccara (Replay, Trips, Stops, Chart, Geofences, Events, Summary)
 i liczone w telefonie – bez serwera i bez internetu.
 
@@ -65,10 +76,10 @@ Aktualizacja: przy zmianie podbij `CACHE` w `sw.js` oraz `VERSION` i `?v=` w `in
 z pominięciem pamięci przeglądarki (Cloudflare daje plikom `.js` `max-age=14400`), a strona przeładowuje się sama,
 gdy nowa wersja przejmie kontrolę.
 
-Pliki: `index.html`, `app.css`, `app.js`, `analiza.js`, `lang.js`, `sw.js` (offline), `manifest.webmanifest`, ikony,
-`vendor/leaflet.*`. Jedyne żądania do internetu to kafelki mapy z `tile.openstreetmap.org` – `sw.js` zapisuje każdy
-obejrzany kafelek w osobnej pamięci (`tracker-psa-tiles`, do 6000 kafelków, nie znika przy aktualizacji aplikacji).
+Pliki: `index.html`, `app.css`, `app.js`, `analiza.js`, `narzedzia.js`, `lang.js`, `sw.js` (offline), `manifest.webmanifest`, ikony,
+`vendor/leaflet.*`. Jedyne żądania do internetu to kafelki map (`tile.openstreetmap.org`, `*.tile.opentopomap.org`,
+`server.arcgisonline.com`) – `sw.js` zapisuje każdy obejrzany kafelek w osobnej pamięci (`tracker-psa-tiles`, do 8000 kafelków, nie znika przy aktualizacji aplikacji).
 Hurtowego pobierania obszaru nie ma celowo: zasady serwera kafelków OSM go zabraniają. Dane: pozycje psa po dniach
 w IndexedDB `tracker-psa` (bez limitu), ostatnie 3000 meldunków, zdarzenia (500) i strefy w `localStorage`.
 Serwer musi zezwalać na `geolocation` i `bluetooth` w nagłówku Permissions-Policy, a CSP na
-`https://tile.openstreetmap.org` w `img-src` i `connect-src`.
+tych trzech serwerów w `img-src` i `connect-src`.

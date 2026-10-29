@@ -1,13 +1,14 @@
 // Tryb offline: pliki aplikacji z pamięci telefonu, w tle sprawdzana nowsza wersja (gdy jest internet).
 // Pliki zawsze pobierane z pominięciem pamięci przeglądarki (cache: 'reload' / 'no-cache'): Cloudflare każe
 // przeglądarce trzymać .js przez kilka godzin, więc inaczej nowa wersja instalowałaby stare pliki.
-// Kafelki mapy OSM: każdy obejrzany kafelek zostaje w osobnej pamięci (nie znika przy nowej wersji aplikacji),
+// Kafelki map (OSM, OpenTopoMap, satelita Esri): każdy obejrzany kafelek zostaje w osobnej pamięci (nie znika przy nowej wersji aplikacji),
 // najpierw z pamięci, z sieci tylko brakujące; najstarsze usuwane powyżej MAX_TILES.
-const CACHE = 'tracker-psa-v10';
+const CACHE = 'tracker-psa-v11';
 const TILES = 'tracker-psa-tiles';
-const MAX_TILES = 6000;   // ok. 100–150 MB
-const FILES = ['./', 'index.html', 'app.css', 'lang.js', 'app.js', 'analiza.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
-  'vendor/leaflet.js', 'vendor/leaflet.css'];
+const MAX_TILES = 8000;   // ok. 150–250 MB (OSM, turystyczna, satelita)
+const TILE_HOSTS = /^(tile\.openstreetmap\.org|[abc]\.tile\.opentopomap\.org|server\.arcgisonline\.com)$/;
+const FILES = ['./', 'index.html', 'app.css', 'lang.js', 'app.js', 'analiza.js', 'narzedzia.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
+  'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/images/layers.png', 'vendor/images/layers-2x.png'];
 
 const key = (url) => { const u = new URL(url, self.location.href); u.search = ''; u.hash = ''; return u.href; };
 
@@ -34,7 +35,7 @@ async function trimTiles(c) {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  if (url.hostname === 'tile.openstreetmap.org') {
+  if (TILE_HOSTS.test(url.hostname)) {
     e.respondWith(caches.open(TILES).then(async (c) => {
       const hit = await c.match(e.request.url);
       if (hit) return hit;

@@ -7,7 +7,7 @@
 // Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-10-beta';
+const VERSION = 'trk2-app-11-beta';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -36,8 +36,9 @@ const store = {
 const S = {
   device: null, rx: null, wantConnected: false, connected: false,
   baseName: '', contacts: new Map(),           // prefix(12 hex) -> {name, lat, lon}
-  tracker: store.get('tracker', ''),           // prefix kontaktu trackera
-  dogName: store.get('dogname', ''),
+  tracker: store.get('tracker', ''),           // prefix wybranego trackera (karta, polecenia, trasa)
+  dogName: store.get('dogname', ''),           // nazwa wybranego trackera z wersji < 11
+  names: store.get('names', {}),               // prefix -> nazwa na mapie
   reports: store.get('reports', []),           // {t, lat, lon, fix, mv, pct, temp, sats, int, search, text, spd, crs}
   myTrail: store.get('mytrail', []),           // [lat, lon, t]
   battWarn: store.get('battwarn', true),
@@ -226,10 +227,11 @@ function motion(p, r) {
 }
 
 function prepReports() {
-  let prev = null;
+  const prev = {};
   for (const r of S.reports) {
     if (r.text) r.text = r.text.split('\n')[0];
-    if (r.fix) { if (r.spd == null) motion(prev, r); prev = r; }
+    const d = devOf(r);
+    if (r.fix) { if (r.spd == null) motion(prev[d], r); prev[d] = r; }
   }
 }
 
@@ -237,7 +239,7 @@ function onMessage(prefix, ts, text) {
   const r = parseReport(text);
   if (!r) return;                                   // zwykła wiadomość czatu – nie dla tej strony
   if (!S.tracker) { S.tracker = prefix; store.set('tracker', prefix); fillTrackerSelect(); }
-  if (prefix !== S.tracker) return;
+  r.dev = prefix;                                   // kilka trackerów naraz – jak lista urządzeń w Traccarze
   const now = Date.now();
   r.t = ts > 1.6e9 && ts * 1000 < now + 120000 ? ts * 1000 : now;   // czas bazy (ustawiany z telefonu)
   r.text = text.split('\n')[0];
@@ -245,26 +247,52 @@ function onMessage(prefix, ts, text) {
     addEvent('alarm', r.text, true, r.t, r.lat != null ? r : null);
     return;
   }
-  const prev = lastReport();
-  if (r.fix) motion(lastFix(), r);
+  const prev = lastReport(prefix);
+  if (r.fix) motion(lastFix(prefix), r);
   S.reports.push(r);
   if (S.reports.length > MAX_REPORTS) S.reports.splice(0, S.reports.length - MAX_REPORTS);
   store.set('reports', S.reports);
-  S.lateEvent = false;
-  hideAlarm();
   checkEvents(r, prev);                             // strefy, bateria, szybki bieg… (analiza.js)
-  if (r.fix) histAdd([r]).then(() => { if (S.tab === 'replay') { fillDays(); loadReplay(false); } });
-  if (S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
+  if (r.fix) histAdd([r]).then(() => { if (S.tab === 'replay' && prefix === S.tracker) { fillDays(); loadReplay(false); } });
+  if (prefix === S.tracker) {
+    S.lateEvent = false;
+    hideAlarm();
+    if (S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
+  }
   render();
+  renderDevices();
   if (A.evFilter === 'rep') renderEvents();
 }
 
-function lastReport() { return S.reports.length ? S.reports[S.reports.length - 1] : null; }
-function lastFix() {
-  for (let i = S.reports.length - 1; i >= 0; i--) if (S.reports[i].fix) return S.reports[i];
+const devOf = (r) => r.dev || S.tracker;          // meldunki sprzed wersji 11 nie mają dev
+function lastReport(dev = S.tracker) {
+  for (let i = S.reports.length - 1; i >= 0; i--) if (devOf(S.reports[i]) === dev) return S.reports[i];
   return null;
 }
-const fixes = () => S.reports.filter((r) => r.fix);
+function lastFix(dev = S.tracker) {
+  for (let i = S.reports.length - 1; i >= 0; i--) if (S.reports[i].fix && devOf(S.reports[i]) === dev) return S.reports[i];
+  return null;
+}
+const fixes = (dev = S.tracker) => S.reports.filter((r) => r.fix && devOf(r) === dev);
+// trackery: wybrany pierwszy, potem pozostałe w kolejności ostatniego meldunku
+function devices() {
+  const out = S.tracker ? [S.tracker] : [];
+  for (let i = S.reports.length - 1; i >= 0; i--) { const d = devOf(S.reports[i]); if (d && !out.includes(d)) out.push(d); }
+  return out;
+}
+function selectDevice(dev) {
+  if (!dev || dev === S.tracker) return;
+  for (const r of S.reports) if (!r.dev) r.dev = S.tracker;   // utrwal przypisanie starych meldunków
+  store.set('reports', S.reports);
+  S.tracker = dev; store.set('tracker', dev);
+  S.lateEvent = false; hideAlarm();
+  lastDotsN = -1; if (dogMarker) dogMarker._key = null;
+  fillTrackerSelect();
+  $('inp-name').value = S.names[dev] || '';
+  render(); renderDevices(); renderZones();
+  if (S.tab === 'replay') fillDays().then(() => loadReplay(true));
+  else centerOn('dog');
+}
 
 // ------------------------------------------------------------------ powiadomienia
 
@@ -369,7 +397,7 @@ function startSensors() {
 // ------------------------------------------------------------------ mapa (Leaflet + OSM)
 
 let map = null, tiles = null, dogMarker = null, meMarker = null, meAcc = null, dogLine = null, myLine = null,
-  dots = null, zonesLayer = null, rpLine = null, rpSel = null, rpMarker = null, rpStops = null, lastDotsN = -1;
+  dots = null, others = null, poiLayer = null, zonesLayer = null, rpLine = null, rpSel = null, rpMarker = null, rpStops = null, lastDotsN = -1;
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function pinIcon(cls, crs, label) {
@@ -384,15 +412,28 @@ function initMap() {
   map = L.map('map', { zoomControl: true, attributionControl: true })
     .setView(f ? [f.lat, f.lon] : S.me ? [S.me.lat, S.me.lon] : [52.07, 19.48], f || S.me ? 16 : 6);
   map.attributionControl.setPrefix(false);
-  tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  }).addTo(map);
+  // podkłady jak w Traccarze; każdy obejrzany kafelek zostaje w telefonie (sw.js)
+  const osm = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const bases = {
+    [t('Mapa OSM')]: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, crossOrigin: true, className: 'tl-street', attribution: osm }),
+    [t('Turystyczna (poziomice)')]: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, crossOrigin: true, className: 'tl-street',
+      subdomains: 'abc', attribution: osm + ', SRTM | © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)' }),
+    [t('Satelita')]: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, crossOrigin: true,
+      attribution: 'Esri, Maxar, Earthstar Geographics' }),
+  };
+  const names = Object.keys(bases);
+  const pick = names[store.get('layer', 0)] || names[0];
+  tiles = bases[pick].addTo(map);
+  L.control.layers(bases, null, { position: 'bottomleft' }).addTo(map);
+  map.on('baselayerchange', (e) => { tiles = e.layer; store.set('layer', Math.max(0, names.indexOf(e.name))); });
   L.control.scale({ imperial: false }).addTo(map);
   const dog = cssVar('--dog'), me = cssVar('--me');
   zonesLayer = L.layerGroup().addTo(map);
   myLine = L.polyline([], { color: me, weight: 3, opacity: 0.5, dashArray: '4 8', interactive: false }).addTo(map);
   dogLine = L.polyline([], { color: dog, weight: 4, opacity: 0.75 }).addTo(map);
   dots = L.layerGroup().addTo(map);
+  others = L.layerGroup().addTo(map);
+  poiLayer = L.layerGroup().addTo(map);
   meAcc = L.circle([0, 0], { radius: 1, color: me, weight: 1, fillOpacity: 0.1, interactive: false });
   meMarker = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 3, fillColor: me, fillOpacity: 1 });
   dogMarker = L.marker([0, 0], { icon: pinIcon('', null), zIndexOffset: 1000 }).bindPopup(() => fixPopup(lastFix(), true));
@@ -405,7 +446,7 @@ function initMap() {
 
 function fixPopup(f, live) {
   if (!f) return t('brak pozycji');
-  const rows = [`<b>${esc(dogName())}</b>`, (live ? ago(f.t) + ' · ' : '') + when(f.t)];
+  const rows = [`<b>${esc(dogName(devOf(f)))}</b>`, (live ? ago(f.t) + ' · ' : '') + when(f.t)];
   if (f.spd != null) rows.push(t('Prędkość') + ': ' + fmtSpd(f.spd) + (f.crs != null && f.spd >= 1.5 ? ' · ' + dirName(f.crs) : ''));
   if (f.pct != null) rows.push(t('Bateria') + ': ' + f.pct + '%' + (f.mv ? ' · ' + num(f.mv / 1000, 2) + ' V' : ''));
   if (f.sats) rows.push('GPS: ' + f.sats + ' sat');
@@ -443,6 +484,16 @@ function drawMap() {
     meMarker.setLatLng([S.me.lat, S.me.lon]); meAcc.setLatLng([S.me.lat, S.me.lon]).setRadius(S.me.acc || 1);
     if (!map.hasLayer(meMarker)) { meAcc.addTo(map); meMarker.addTo(map); }
   }
+  // pozostałe trackery (szare znaczniki; dotknięcie = wybór)
+  others.clearLayers();
+  if (live) {
+    for (const d of devices().slice(1)) {
+      const o = lastFix(d);
+      if (!o) continue;
+      L.marker([o.lat, o.lon], { icon: pinIcon('other', o.spd >= 1.5 ? o.crs : null, dogName(d)), zIndexOffset: 900 })
+        .on('click', () => selectDevice(d)).addTo(others);
+    }
+  }
 }
 
 function centerOn(what) {
@@ -455,7 +506,8 @@ function centerOn(what) {
     if (S.tab === 'replay') S.rp.list.forEach((r) => pts.push([r.lat, r.lon]));
     else { if (f) pts.push([f.lat, f.lon]); dogLine.getLatLngs().forEach((p) => pts.push(p)); }
     if (S.me) pts.push([S.me.lat, S.me.lon]);
-    for (const z of A.zones) if (z.on) { const b = L.latLng(z.lat, z.lon).toBounds(z.r * 2); pts.push(b.getNorthEast(), b.getSouthWest()); }
+    for (const z of A.zones) if (z.on) { const b = zoneBounds(z); pts.push(b.getNorthEast(), b.getSouthWest()); }
+    for (const q of N.pois) pts.push([q.lat, q.lon]);
     if (pts.length > 1) map.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
     else if (pts.length) map.setView(pts[0], 16);
   }
@@ -512,8 +564,10 @@ function drawRadar() {
   g.strokeStyle = col('--geo'); g.setLineDash([6, 6]); g.lineWidth = 2;
   for (const z of A.zones) {
     if (!z.on) continue;
-    const [gx, gy] = proj(z.lat, z.lon);
-    g.beginPath(); g.arc(gx, gy, (z.r / range) * rad, 0, 2 * Math.PI); g.stroke();
+    g.beginPath();
+    if (z.pts) { z.pts.forEach(([la, lo], i) => { const [x, y] = proj(la, lo); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath(); }
+    else { const [gx, gy] = proj(z.lat, z.lon); g.arc(gx, gy, (z.r / range) * rad, 0, 2 * Math.PI); }
+    g.stroke();
   }
   g.setLineDash([]);
   g.strokeStyle = col('--me'); g.globalAlpha = 0.35; g.lineWidth = 2; g.beginPath();
@@ -540,15 +594,17 @@ function drawRadar() {
 
 // ------------------------------------------------------------------ stan urządzenia i karta
 
-function dogName() {
-  if (S.dogName) return S.dogName;
-  const c = S.contacts.get(S.tracker);
-  return c && c.name ? c.name : t('Pies');
+function dogName(dev = S.tracker) {
+  if (S.names[dev]) return S.names[dev];
+  if (dev === S.tracker && S.dogName) return S.dogName;
+  const c = S.contacts.get(dev);
+  if (c && c.name) return c.name;
+  return devices().length > 1 ? t('Pies') + ' ' + (devices().indexOf(dev) + 1) : t('Pies');
 }
 
 // 'on' = meldunki na czas, 'late' = spóźniony, 'off' = brak danych
-function devState() {
-  const rep = lastReport();
+function devState(dev = S.tracker) {
+  const rep = lastReport(dev);
   if (!rep) return 'off';
   const late = rep.int && Date.now() - rep.t > (2 * rep.int + 60) * 1000;
   return late ? 'late' : 'on';
@@ -601,6 +657,8 @@ function render() {
   setText('a-geo', zs.text, zs.cls);
   const today = fixes().filter((r) => sameDay(r.t, Date.now()));
   setText('a-today', today.length > 1 ? fmtDist(pathStats(today).dist) : '–');
+  const np = nearestPoi(fix);
+  setText('a-poi', np ? np.icon + ' ' + np.name + ' · ' + fmtDist(np.d) : '–');
 
   // linki do zewnętrznych map
   const p = fix || (rep && rep.lat != null ? rep : null);
@@ -653,8 +711,11 @@ function checkLate() {
     if ($('alarm').hidden || (Math.floor(late / 60000) !== S.lastLateMin)) {
       S.lastLateMin = Math.floor(late / 60000);
       const msg = tf('Brak meldunku od {n} min', { n: mins });
-      if (!S.lateEvent) { S.lateEvent = true; addEvent('late', msg, false, Date.now(), lastFix()); }
-      showAlarm(msg + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
+      const first = !S.lateEvent;
+      if (first) { S.lateEvent = true; addEvent('late', msg, false, Date.now(), lastFix(), true); }
+      const lvl = ruleOf('late');
+      if (lvl === 'alarm') showAlarm(msg + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
+      else if (lvl === 'notify' && first) notify(msg);
     }
   }
 }
@@ -726,18 +787,28 @@ function demo() {
   const now = Date.now(), lat0 = 52.2297, lon0 = 21.0122, n = 60;
   S.me = { lat: lat0 + 0.004, lon: lon0 + 0.006, acc: 8, t: now };
   S.heading = 30;
+  S.tracker = 'demo1';
+  S.names = { demo1: 'Burek', demo2: 'Luna' };
   S.reports = [];
   for (let i = 0; i < n; i++) {
     const k = i < 25 ? i : i < 33 ? 25 + (i - 25) * 0.03 : i - 7;   // postój w środku spaceru
     const lat = lat0 + 0.00055 * k + 0.0004 * Math.sin(k / 3), lon = lon0 + 0.0007 * k + 0.0003 * Math.cos(k / 4);
     const r = { t: now - (n - i) * 120000, lat, lon, fix: true, mv: 4080 - i * 4, pct: 88 - Math.round(i / 3), temp: 14, sats: 9,
-      int: 120, search: false };
+      int: 120, search: false, dev: 'demo1' };
     r.text = fmtDist(distM(lat0, lon0, lat, lon)) + ' · ' + num(r.mv / 1000, 2) + ' V ' + r.pct + '% · 14°C · 9 sat · co 120 s';
     S.reports.push(r);
   }
+  for (let i = 0; i < 12; i++) {   // drugi pies, kawałek dalej
+    const lat = lat0 + 0.012 + 0.0004 * i, lon = lon0 + 0.03 - 0.0006 * i;
+    S.reports.push({ t: now - (12 - i) * 60000 - 30000, lat, lon, fix: true, mv: 3950, pct: 64, temp: 15, sats: 7, int: 60, search: false, dev: 'demo2',
+      text: '3,95 V 64% · 15°C · 7 sat · co 60 s' });
+  }
+  S.reports.sort((a, b) => a.t - b.t);
   prepReports();
+  N.pois = [{ id: 'p1', name: 'Auto', icon: '🚗', lat: lat0 - 0.001, lon: lon0 - 0.002 }];
   S.myTrail = Array.from({ length: 40 }, (_, i) => [lat0 + 0.0001 * i, lon0 + 0.00015 * i, now - (40 - i) * 180000]);
-  A.zones = [{ id: 'demo', name: t('Obóz'), lat: lat0 + 0.016, lon: lon0 + 0.02, r: 2000, on: true }];
+  A.zones = [{ id: 'demo', name: t('Obóz'), lat: lat0 + 0.016, lon: lon0 + 0.02, r: 2000, on: true },
+    { id: 'demo2', name: 'Park', on: true, pts: [[lat0 + 0.009, lon0 + 0.026], [lat0 + 0.016, lon0 + 0.026], [lat0 + 0.017, lon0 + 0.034], [lat0 + 0.01, lon0 + 0.036]] }];
   A.inside = { demo: true };
   A.events = [
     { t: now - 125 * 60000, type: 'conn', text: tf('Połączono z bazą {name}.', { name: 'BAZA2' }) },
@@ -747,7 +818,7 @@ function demo() {
   ];
   // historia tras tylko w pamięci: dziś (meldunki powyżej) i wczoraj (pętla)
   const y = now - 864e5;
-  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t) })).concat(Array.from({ length: 90 }, (_, i) => {
+  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t), tracker: r.dev })).concat(Array.from({ length: 90 }, (_, i) => {
     const a = (i / 90) * 2 * Math.PI, tt = y - (90 - i) * 60000;
     return { t: tt, day: dayKey(tt), lat: lat0 + 0.004 * Math.sin(a), lon: lon0 + 0.006 * (1 - Math.cos(a)), mv: 4100 - i * 2, pct: 90 - Math.floor(i / 9), sats: 8, int: 60, search: false };
   }));
@@ -786,10 +857,13 @@ function init() {
     if (S.follow) centerOn('dog');
   });
   // ustawienia
-  $('sel-tracker').addEventListener('change', (e) => { S.tracker = e.target.value; store.set('tracker', S.tracker); render(); });
-  $('inp-name').value = S.dogName;
+  $('sel-tracker').addEventListener('change', (e) => { if (e.target.value) selectDevice(e.target.value); });
+  $('inp-name').value = S.names[S.tracker] || S.dogName;
   $('inp-name').placeholder = t('Pies');
-  $('inp-name').addEventListener('change', (e) => { S.dogName = e.target.value.trim(); store.set('dogname', S.dogName); render(); });
+  $('inp-name').addEventListener('change', (e) => {
+    S.names[S.tracker] = e.target.value.trim(); if (!S.names[S.tracker]) delete S.names[S.tracker];
+    store.set('names', S.names); render(); renderDevices();
+  });
   $('chk-sound').checked = S.sound;
   $('chk-sound').addEventListener('change', (e) => { S.sound = e.target.checked; store.set('sound', S.sound); });
   $('chk-batt').checked = S.battWarn;
@@ -816,6 +890,7 @@ function init() {
   window.addEventListener('resize', () => { if (S.tab === 'radar') drawRadar(); });
   initMap();
   initAnaliza();
+  initNarzedzia();
   // meldunki zapisane przed wersją z historią (i przy każdym starcie, na wszelki wypadek) – put nie dubluje
   histAdd(S.reports);
   followUI();
@@ -837,5 +912,5 @@ function init() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
-// analiza.js ładuje się po app.js – start, gdy oba są gotowe
+// analiza.js i narzedzia.js ładują się po app.js – start, gdy wszystkie są gotowe
 document.addEventListener('DOMContentLoaded', init);

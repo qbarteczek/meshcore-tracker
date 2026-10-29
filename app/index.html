@@ -7,8 +7,8 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="vendor/leaflet.css?v=10">
-<link rel="stylesheet" href="app.css?v=10">
+<link rel="stylesheet" href="vendor/leaflet.css?v=11">
+<link rel="stylesheet" href="app.css?v=11">
 </head>
 <body data-tab="map">
 <header class="bar">
@@ -30,8 +30,20 @@
       <button id="btn-c-dog" class="fab" type="button" title="Pokaż psa">🐕</button>
       <button id="btn-c-me" class="fab" type="button" title="Pokaż mnie">📍</button>
       <button id="btn-c-all" class="fab" type="button" title="Pokaż wszystko">⤢</button>
+      <button id="btn-measure" class="fab" type="button" title="Miarka">📏</button>
       <button id="btn-follow" class="fab wide" type="button">Śledź psa</button>
     </div>
+    <div id="map-bar" class="map-bar" hidden>
+      <span id="mb-text"></span>
+      <button id="mb-undo" type="button">Cofnij</button>
+      <button id="mb-cancel" type="button">Anuluj</button>
+      <button id="mb-done" class="pill" type="button">Koniec</button>
+    </div>
+  </section>
+
+  <section id="devices-card" class="devices view-map" hidden>
+    <h2>Trackery</h2>
+    <ol id="dev-list" class="list devs"></ol>
   </section>
 
   <!-- ================= Mapa: karta psa, polecenia, strefa ================= -->
@@ -52,8 +64,13 @@
       <div><dt>Następny za</dt><dd id="a-next">–</dd></div>
       <div><dt>Strefa</dt><dd id="a-geo">wyłączona</dd></div>
       <div><dt>Dziś przebiegł</dt><dd id="a-today">–</dd></div>
+      <div><dt>Najbliższy punkt</dt><dd id="a-poi">–</dd></div>
       <div class="wide"><dt>Pozycja</dt><dd id="a-pos">–</dd></div>
     </dl>
+    <div class="row-btns">
+      <button id="btn-share" type="button">Udostępnij pozycję</button>
+      <button id="btn-sms" type="button">Wyślij SMS</button>
+    </div>
   </section>
 
   <section class="cmds view-map">
@@ -84,8 +101,23 @@
         <option value="dog">wokół psa</option><option value="me">wokół mnie</option><option value="map">środek mapy</option>
       </select>
       <button id="zone-add" type="button">Dodaj strefę</button>
+      <button id="zone-draw" type="button">Narysuj strefę na mapie</button>
     </div>
     <div id="zone-msg" class="hint"></div>
+  </section>
+
+  <section class="pois-card view-map">
+    <h2>Punkty</h2>
+    <ol id="poi-list" class="list"></ol>
+    <div class="zone-form">
+      <input id="poi-name" type="text" maxlength="24" placeholder="Nazwa, np. Auto" aria-label="Nazwa punktu">
+      <select id="poi-icon" aria-label="Ikona punktu"></select>
+      <select id="poi-src" aria-label="Miejsce punktu">
+        <option value="me">tu, gdzie jestem</option><option value="dog">przy psie</option><option value="map">środek mapy</option>
+      </select>
+      <button id="poi-add" type="button">Dodaj punkt</button>
+    </div>
+    <div id="poi-msg" class="hint"></div>
   </section>
 
   <!-- ================= Trasa: odtwarzanie i raport ================= -->
@@ -98,9 +130,14 @@
           <option value="today" selected>Dziś</option>
           <option value="yday">Wczoraj</option>
           <option value="all">Cała historia</option>
+          <option value="custom">Od – do…</option>
         </select>
       </label>
       <span id="rp-count" class="muted"></span>
+    </div>
+    <div id="rp-custom" class="rp-custom" hidden>
+      <label>Od <input id="rp-from" type="datetime-local"></label>
+      <label>Do <input id="rp-to" type="datetime-local"></label>
     </div>
     <div class="rp-player">
       <button id="rp-play" class="pill" type="button">▶</button>
@@ -142,6 +179,14 @@
     <canvas id="stats-chart" aria-label="Dystans psa w ostatnich dniach"></canvas>
     <div id="stats-sum" class="hint"></div>
     <div id="stats-empty" class="hint">Brak danych.</div>
+    <h3>Raport dni</h3>
+    <div class="table-wrap">
+      <table id="days-table" class="days" hidden>
+        <thead><tr><th>Dzień</th><th>Dystans</th><th>W ruchu</th><th>Najszybciej</th><th>Postoje</th><th>Bateria min.</th><th>Pozycji</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="odometer" class="hint"></p>
   </section>
 
   <!-- ================= Radar ================= -->
@@ -194,6 +239,10 @@
     <label class="row"><input id="chk-batt" type="checkbox" checked> Ostrzegaj o słabej baterii psa (20%)</label>
     <button id="btn-notif" type="button">Zezwól na powiadomienia</button>
 
+    <h3>Reguły powiadomień</h3>
+    <p class="hint">Jak w Traccarze: dla każdego zdarzenia wybierz, czy ma włączyć alarm z dźwiękiem, pokazać powiadomienie, czy tylko trafić do dziennika.</p>
+    <div id="rules" class="rules"></div>
+
     <h3>Mapa offline</h3>
     <p class="hint">Podkład mapy pochodzi z OpenStreetMap. Każdy obejrzany fragment mapy zostaje w telefonie: przed wyjazdem,
       z internetem, przejrzyj okolicę wędrówki w kilku powiększeniach (ogólnie i z bliska). Bez internetu
@@ -221,9 +270,10 @@
   <button data-tab="events" type="button"><span>🔔</span>Zdarzenia<i id="ev-badge" hidden></i></button>
   <button data-tab="settings" type="button"><span>⚙️</span>Ustawienia</button>
 </nav>
-<script src="vendor/leaflet.js?v=10"></script>
-<script src="lang.js?v=10"></script>
-<script src="app.js?v=10"></script>
-<script src="analiza.js?v=10"></script>
+<script src="vendor/leaflet.js?v=11"></script>
+<script src="lang.js?v=11"></script>
+<script src="app.js?v=11"></script>
+<script src="analiza.js?v=11"></script>
+<script src="narzedzia.js?v=11"></script>
 </body>
 </html>

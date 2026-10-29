@@ -59,13 +59,13 @@ async function histStore(mode) {
 async function histAdd(reports) {
   const fixes = reports.filter((r) => r.fix && r.lat != null);
   if (!fixes.length) return;
-  if (H.mem) { for (const r of fixes) if (!H.mem.some((p) => p.t === r.t)) H.mem.push({ ...r, day: dayKey(r.t) }); return; }
+  if (H.mem) { for (const r of fixes) if (!H.mem.some((p) => p.t === r.t)) H.mem.push({ ...r, day: dayKey(r.t), tracker: r.dev || S.tracker }); return; }
   try {
     const st = await histStore('readwrite');
     // klucz = czas meldunku, więc ponowny zapis tego samego meldunku nic nie dubluje
     for (const r of fixes) {
       st.put({ t: r.t, day: dayKey(r.t), lat: r.lat, lon: r.lon, mv: r.mv, pct: r.pct, temp: r.temp,
-        sats: r.sats, int: r.int, search: r.search, tracker: S.tracker });
+        sats: r.sats, int: r.int, search: r.search, tracker: r.dev || S.tracker });
     }
     await new Promise((res, rej) => { st.transaction.oncomplete = res; st.transaction.onerror = () => rej(st.transaction.error); });
   } catch (e) { console.warn('historia:', e); }
@@ -107,7 +107,7 @@ async function histRange(a, b) {
   const days = (await histDays()).map((d) => d.day).filter((d) => d >= d0 && d <= d1).sort();
   let out = [];
   for (const d of days) out = out.concat(await histGet(d));
-  out = out.filter((p) => p.t >= a && p.t < b).sort((x, y) => x.t - y.t);
+  out = out.filter((p) => p.t >= a && p.t < b && (!p.tracker || p.tracker === S.tracker)).sort((x, y) => x.t - y.t);
   let prev = null;
   for (const p of out) { p.fix = true; p.spd = null; p.crs = null; motion(prev, p); prev = p; }
   return out;
@@ -162,6 +162,7 @@ let rpToken = 0;
 function rangeOf(key) {
   const now = Date.now(), d0 = new Date(); d0.setHours(0, 0, 0, 0);
   const day = d0.getTime();
+  if (key === 'custom') return customRange();   // narzedzia.js
   if (key === 'h1') return [now - 3600e3, now + 1];
   if (key === 'h6') return [now - 6 * 3600e3, now + 1];
   if (key === 'today') return [day, now + 1];
@@ -239,6 +240,7 @@ async function loadReplay(fit) {
   if (fit && map && list.length > 1) map.fitBounds(rpLine.getBounds(), { padding: [30, 30], maxZoom: 17 });
   else if (fit && map && list.length) map.setView([list[0].lat, list[0].lon], 16);
   renderStats(rangeDay(key));
+  renderDaysTable();
 }
 
 function renderSegments() {
@@ -317,6 +319,7 @@ function replayLayers(on) {
   if (!map) return;
   for (const l of [rpLine, rpSel, rpStops]) { if (on && !map.hasLayer(l)) l.addTo(map); if (!on && map.hasLayer(l)) l.remove(); }
   if (!on && map.hasLayer(rpMarker)) rpMarker.remove();
+  if (on) others.clearLayers();   // na trasie tylko wybrany tracker
   if (!on) stopPlay();
 }
 
@@ -369,11 +372,13 @@ async function renderStats(selDay) {
   if (!w || !days.length) { $('stats-sum').textContent = ''; return; }
   const rows = [];
   for (const d of days) {
-    const pts = await histGet(d.day);
+    const pts = (await histGet(d.day)).filter((p) => !p.tracker || p.tracker === S.tracker);
+    if (!pts.length) continue;
     const st = pathStats(pts);
     const active = segments(pts).filter((s) => s.type === 'trip').reduce((a, s) => a + (s.t1 - s.t0), 0);
     rows.push({ day: d.day, m: st.dist, active });
   }
+  if (!rows.length) { cv.hidden = true; $('stats-empty').hidden = false; $('stats-sum').textContent = ''; return; }
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   const g = cv.getContext('2d'), col = cssVar;
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -436,6 +441,42 @@ function exportRange(fmt) {
 }
 
 // ------------------------------------------------------------------ strefy (geofence)
+// okrąg {lat, lon, r} albo wielokąt narysowany na mapie {pts: [[lat, lon], …]}
+
+function zoneInside(z, p) {
+  if (!z.pts) return distM(z.lat, z.lon, p.lat, p.lon) <= z.r;
+  let inside = false;                              // promień w poziomie (ray casting) na lat/lon
+  for (let i = 0, j = z.pts.length - 1; i < z.pts.length; j = i++) {
+    const [yi, xi] = z.pts[i], [yj, xj] = z.pts[j];
+    if ((yi > p.lat) !== (yj > p.lat) && p.lon < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// odległość od granicy strefy (m), 0 w środku
+function zoneOut(z, p) {
+  if (zoneInside(z, p)) return 0;
+  if (!z.pts) return distM(z.lat, z.lon, p.lat, p.lon) - z.r;
+  const kx = K * R * Math.cos(p.lat * K), ky = K * R;
+  const xy = ([la, lo]) => [(lo - p.lon) * kx, (la - p.lat) * ky];
+  let best = Infinity;
+  for (let i = 0; i < z.pts.length; i++) {
+    const [ax, ay] = xy(z.pts[i]), [bx, by] = xy(z.pts[(i + 1) % z.pts.length]);
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const u = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(ax + u * dx, ay + u * dy));
+  }
+  return best;
+}
+function zoneBounds(z) {
+  return z.pts ? L.latLngBounds(z.pts) : L.latLng(z.lat, z.lon).toBounds(z.r * 2);
+}
+function zoneSize(z) {
+  if (!z.pts) return fmtDist(z.r);
+  const b = zoneBounds(z);
+  return t('obszar') + ' ' + fmtDist(distM(b.getSouth(), b.getWest(), b.getNorth(), b.getWest())) + ' × '
+    + fmtDist(distM(b.getSouth(), b.getWest(), b.getSouth(), b.getEast()));
+}
+const inKey = (z, dev) => z.id + '|' + (dev || S.tracker);
 
 function saveZones() { store.set('zones', A.zones); store.set('zones-in', A.inside); }
 
@@ -451,16 +492,18 @@ function renderZones() {
     const cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = z.on; cb.setAttribute('aria-label', t('Strefa włączona'));
     cb.addEventListener('change', () => { z.on = cb.checked; saveZones(); drawZones(); render(); });
-    const inside = fix ? distM(z.lat, z.lon, fix.lat, fix.lon) <= z.r : null;
+    const inside = fix ? zoneInside(z, fix) : null;
     const span = document.createElement('span');
     span.className = 'x click' + (z.on && inside === false ? ' bad' : '');
-    span.textContent = z.name + ' · ' + fmtDist(z.r) + (inside === null ? '' : ' · ' + (inside ? t('pies w strefie') : t('pies poza strefą')));
-    span.addEventListener('click', () => { if (map) map.fitBounds(L.latLng(z.lat, z.lon).toBounds(z.r * 2.4)); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+    span.textContent = (z.pts ? '⬠ ' : '◯ ') + z.name + ' · ' + zoneSize(z) + (inside === null ? '' : ' · ' + (inside ? t('pies w strefie') : t('pies poza strefą')));
+    span.addEventListener('click', () => { if (map) map.fitBounds(zoneBounds(z).pad(0.2)); window.scrollTo({ top: 0, behavior: 'smooth' }); });
     const del = document.createElement('button');
     del.type = 'button'; del.className = 'chip'; del.textContent = '✕'; del.setAttribute('aria-label', t('Usuń strefę'));
     del.addEventListener('click', () => {
       if (!confirm(tf('Usunąć strefę „{n}”?', { n: z.name }))) return;
-      A.zones = A.zones.filter((x) => x !== z); delete A.inside[z.id]; saveZones(); renderZones(); drawZones(); render();
+      A.zones = A.zones.filter((x) => x !== z);
+      for (const k of Object.keys(A.inside)) if (k === z.id || k.startsWith(z.id + '|')) delete A.inside[k];
+      saveZones(); renderZones(); drawZones(); render();
     });
     li.append(cb, span, del);
     list.append(li);
@@ -476,16 +519,28 @@ function addZone() {
   else if (src === 'dog') c = fix;
   if (!c) { $('zone-msg').textContent = src === 'me' ? t('Brak pozycji telefonu.') : t('Brak pozycji psa.'); return; }
   const name = $('zone-name').value.trim() || t('Strefa') + ' ' + (A.zones.length + 1);
-  const z = { id: Date.now().toString(36), name, lat: c.lat, lon: c.lon, r: +$('zone-r').value, on: true };
+  saveNewZone({ id: Date.now().toString(36), name, lat: c.lat, lon: c.lon, r: +$('zone-r').value, on: true });
+}
+
+// wspólne dla okręgu i wielokąta narysowanego na mapie (narzedzia.js)
+function saveNewZone(z) {
   A.zones.push(z);
-  if (fix) A.inside[z.id] = distM(z.lat, z.lon, fix.lat, fix.lon) <= z.r;
   saveZones();
   $('zone-name').value = '';
-  $('zone-msg').textContent = tf('Dodano strefę „{n}”.', { n: name });
-  addEvent('zone_set', tf('Dodano strefę „{n}”.', { n: name }) + ' ' + fmtDist(z.r), false, Date.now(), z);
-  if (fix && !A.inside[z.id]) addEvent('zone_out', tf('Pies wyszedł ze strefy „{n}” ({d} od środka)', { n: z.name, d: fmtDist(distM(z.lat, z.lon, fix.lat, fix.lon)) }), true, Date.now(), fix);
+  $('zone-msg').textContent = tf('Dodano strefę „{n}”.', { n: z.name });
+  const c = zoneBounds(z).getCenter();
+  addEvent('zone_set', tf('Dodano strefę „{n}”.', { n: z.name }) + ' ' + zoneSize(z), false, Date.now(), { lat: c.lat, lon: c.lng });
+  for (const d of devices()) {
+    const f = lastFix(d);
+    if (!f) continue;
+    A.inside[inKey(z, d)] = zoneInside(z, f);
+    if (!A.inside[inKey(z, d)]) {
+      addEvent('zone_out', who(d) + tf('Pies wyszedł ze strefy „{n}” ({d} poza granicą)', { n: z.name, d: fmtDist(zoneOut(z, f)) }), true, Date.now(), f);
+    }
+  }
+  saveZones();
   renderZones(); drawZones(); render();
-  if (map) map.fitBounds(L.latLng(z.lat, z.lon).toBounds(z.r * 2.4));
+  if (map) map.fitBounds(zoneBounds(z).pad(0.2));
 }
 
 function drawZones() {
@@ -493,7 +548,8 @@ function drawZones() {
   zonesLayer.clearLayers();
   for (const z of A.zones) {
     if (!z.on) continue;
-    L.circle([z.lat, z.lon], { radius: z.r, color: cssVar('--geo'), weight: 2, dashArray: '6 6', fillOpacity: 0.06 })
+    const st = { color: cssVar('--geo'), weight: 2, dashArray: '6 6', fillOpacity: 0.06 };
+    (z.pts ? L.polygon(z.pts, st) : L.circle([z.lat, z.lon], { radius: z.r, ...st }))
       .bindTooltip(z.name, { direction: 'top' }).addTo(zonesLayer);
   }
 }
@@ -503,8 +559,8 @@ function zonesStatus(fix) {
   const on = A.zones.filter((z) => z.on);
   if (!on.length) return { text: t('brak stref'), cls: '' };
   if (!fix) return { text: on.map((z) => z.name).join(', '), cls: '' };
-  const out = on.filter((z) => distM(z.lat, z.lon, fix.lat, fix.lon) > z.r);
-  if (out.length) return { text: t('POZA strefą') + ' ' + out.map((z) => '„' + z.name + '” ' + fmtDist(distM(z.lat, z.lon, fix.lat, fix.lon))).join(', '), cls: 'bad' };
+  const out = on.filter((z) => !zoneInside(z, fix));
+  if (out.length) return { text: t('POZA strefą') + ' ' + out.map((z) => '„' + z.name + '” +' + fmtDist(zoneOut(z, fix))).join(', '), cls: 'bad' };
   return { text: t('w strefie') + ' ' + on.map((z) => '„' + z.name + '”').join(', '), cls: 'good' };
 }
 
@@ -513,16 +569,26 @@ function zonesStatus(fix) {
 const EV_ICON = { alarm: '⚠️', late: '⏰', zone_out: '🚧', zone_in: '🏠', zone_set: '⭕', batt: '🪫', fast: '💨', nofix: '📡',
   search: '🔍', cmd: '📨', conn: '🔗', disc: '🔌', back: '✅' };
 const EV_ALARM = ['alarm', 'late', 'zone_out', 'batt'];
+const RULE_TYPES = ['zone_out', 'zone_in', 'late', 'alarm', 'batt', 'nofix', 'fast', 'back', 'search', 'cmd', 'conn', 'disc'];
+const RULE_DEFAULT = { zone_out: 'alarm', late: 'alarm', alarm: 'alarm', batt: 'notify', back: 'notify' };
+A.rules = store.get('rules', {});
+const ruleOf = (type) => A.rules[type] || RULE_DEFAULT[type] || 'log';
+// kto: przy kilku trackerach nazwa przed treścią zdarzenia
+const who = (dev) => (devices().length > 1 ? dogName(dev) + ': ' : '');
 const EV_GOOD = ['zone_in', 'back'];
 
-function addEvent(type, text, alarm, tt, pos) {
+// silent: tylko zapis (np. „brak meldunku” – alarm obsługuje checkLate według tej samej reguły)
+function addEvent(type, text, alarm, tt, pos, silent) {
   const e = { t: tt || Date.now(), type, text };
   if (pos && pos.lat != null) { e.lat = pos.lat; e.lon = pos.lon; }
   A.events.push(e);
   if (A.events.length > 500) A.events.splice(0, A.events.length - 500);
   store.set('events', A.events);
   renderEvents();
-  if (alarm) showAlarm(text);
+  if (silent) return;
+  const lvl = ruleOf(type);
+  if (lvl === 'alarm') showAlarm(text);
+  else if (lvl === 'notify') notify(text);
 }
 
 function renderEvents() {
@@ -553,31 +619,34 @@ function renderEvents() {
 
 // wywoływane przez app.js przy każdym meldunku (prev = poprzedni meldunek)
 function checkEvents(r, prev) {
-  if (r.back) addEvent('back', t('Kontakt z psem wrócił'), false, r.t, r.fix ? r : null);
-  if (r.search && !(prev && prev.search)) addEvent('search', t('Szukanie włączone (meldunek co 30 s)'), false, r.t);
-  if (!r.search && prev && prev.search) addEvent('search', t('Szukanie zakończone'), false, r.t);
+  const dev = r.dev || S.tracker, w = who(dev);
+  if (r.back) addEvent('back', w + t('Kontakt z psem wrócił'), false, r.t, r.fix ? r : null);
+  if (r.search && !(prev && prev.search)) addEvent('search', w + t('Szukanie włączone (meldunek co 30 s)'), false, r.t);
+  if (!r.search && prev && prev.search) addEvent('search', w + t('Szukanie zakończone'), false, r.t);
   if (r.pct != null && r.pct <= LOW_BATT && !(prev && prev.pct != null && prev.pct <= LOW_BATT) && S.battWarn) {
-    const msg = tf('Niska bateria trackera: {p}%', { p: r.pct });
-    addEvent('batt', msg, false, r.t);
-    notify(msg);
+    addEvent('batt', w + tf('Niska bateria trackera: {p}%', { p: r.pct }), false, r.t);
   }
-  if (!r.fix && prev && prev.fix) addEvent('nofix', t('Tracker stracił GPS'), false, r.t);
+  if (!r.fix && prev && prev.fix) addEvent('nofix', w + t('Tracker stracił GPS'), false, r.t);
   if (!r.fix) return;
   let prevFix = null;
-  for (let i = S.reports.length - 2; i >= 0; i--) if (S.reports[i].fix) { prevFix = S.reports[i]; break; }
+  for (let i = S.reports.length - 1; i >= 0; i--) {
+    const q = S.reports[i];
+    if (q !== r && q.fix && (q.dev || S.tracker) === dev) { prevFix = q; break; }
+  }
   if (prevFix) {
     const v = speedKmh(prevFix, r);
-    if (v >= FAST_KMH && v <= JUMP_KMH && r.t - prevFix.t <= 10 * 60000) addEvent('fast', tf('Szybki bieg: {v}', { v: fmtSpd(v) }), false, r.t, r);
+    if (v >= FAST_KMH && v <= JUMP_KMH && r.t - prevFix.t <= 10 * 60000) addEvent('fast', w + tf('Szybki bieg: {v}', { v: fmtSpd(v) }), false, r.t, r);
   }
   let changed = false;
   for (const z of A.zones) {
     if (!z.on) continue;
-    const d = distM(z.lat, z.lon, r.lat, r.lon), inside = d <= z.r;
-    if (A.inside[z.id] === undefined) { A.inside[z.id] = inside; changed = true; continue; }
-    if (inside !== A.inside[z.id]) {
-      A.inside[z.id] = inside; changed = true;
-      if (inside) addEvent('zone_in', tf('Pies wrócił do strefy „{n}”', { n: z.name }), false, r.t, r);
-      else addEvent('zone_out', tf('Pies wyszedł ze strefy „{n}” ({d} od środka)', { n: z.name, d: fmtDist(d) }), true, r.t, r);
+    const inside = zoneInside(z, r), k = inKey(z, dev);
+    if (A.inside[k] === undefined && dev === S.tracker && A.inside[z.id] !== undefined) A.inside[k] = A.inside[z.id];   // wersja < 11
+    if (A.inside[k] === undefined) { A.inside[k] = inside; changed = true; continue; }
+    if (inside !== A.inside[k]) {
+      A.inside[k] = inside; changed = true;
+      if (inside) addEvent('zone_in', w + tf('Pies wrócił do strefy „{n}”', { n: z.name }), false, r.t, r);
+      else addEvent('zone_out', w + tf('Pies wyszedł ze strefy „{n}” ({d} poza granicą)', { n: z.name, d: fmtDist(zoneOut(z, r)) }), true, r.t, r);
     }
   }
   if (changed) { saveZones(); renderZones(); }
