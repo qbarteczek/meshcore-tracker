@@ -38,6 +38,8 @@ public:
                  uint32_t& expected_ack, uint32_t& est_timeout) override;
   bool setSetting(const char* name, const char* value) override;
   int  formatSettings(char* dest, int max_len) override;
+  void onTimeSet() override { _clock_ok = true; }   // only then our time is good enough to give to trackers
+  bool _clock_ok = false;
 
 private:
   struct Config {

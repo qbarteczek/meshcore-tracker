@@ -20,5 +20,6 @@ public:
                          uint32_t& expected_ack, uint32_t& est_timeout) { return false; }
   virtual bool setSetting(const char* name, const char* value) = 0;     // custom var; true = handled
   virtual int  formatSettings(char* dest, int max_len) = 0;             // ",name:value,..."
+  virtual void onTimeSet() { }                                          // the app set the clock (CMD_SET_DEVICE_TIME)
   virtual ~TrackerHooks() { }
 };

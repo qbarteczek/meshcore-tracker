@@ -22,6 +22,7 @@ extern MyMesh the_mesh;
 #define TB_ALARM_REPEAT_MS  (10 * 60000UL)
 #define TB_ALARM_SLOW_MS    (30 * 60000UL)
 #define TB_LOW_BATT_MV      3550
+#define TB_CLOCK_SKEW_S     120         // tracker clock off by more than this: send it ours (#C t=)
 
 // ------------------------------------------------------------------ setup / settings
 
@@ -211,6 +212,15 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
     t.cmd_user = false;
     t.cmd_ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
     t.cmd_attempt = 0;
+  }
+  // clock: the tracker has no RTC battery and boots with a guessed time; give it ours when it is off by > 2 min
+  // (only in automatic commands - one typed in the app is held for several reports and would carry an old time)
+  uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  long skew = (long)sender_ts - (long)now;
+  if (_clock_ok && sender_ts && (skew > TB_CLOCK_SKEW_S || skew < -TB_CLOCK_SKEW_S) && !t.cmd_user) {   // own clock from the app
+    size_t l = strlen(t.cmd);
+    if (!l) { strcpy(t.cmd, "#C"); l = 2; t.cmd_ts = the_mesh.getRTCClock()->getCurrentTimeUnique(); t.cmd_attempt = 0; }
+    snprintf(t.cmd + l, sizeof(t.cmd) - l, " t=%lu", (unsigned long)(now + TB_REPLY_DELAY_MS / 1000));
   }
   if (t.cmd[0]) t.send_at = (millis() + TB_REPLY_DELAY_MS) | 1;
 

@@ -368,6 +368,9 @@ bool TrackerMode::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
         if (!v && _sos) { _sos = false; _buzz_pending = 2; }   // SOS answered: two beeps for the person
         break;
       case 'z': _buzz_pending = (uint8_t)constrain(v, 1L, 10L); break;   // "call": beep N times
+      case 't':   // time from the base (no RTC battery: the clock is only guessed after a reboot); also backwards
+        if (v > 1700000000L) the_mesh.getRTCClock()->setCurrentTime((uint32_t)v);
+        break;
       case 'c': _config_requested = v != 0; break;
       case 'b': setFieldMode(p[2] == 'f' || p[2] == '1'); break;
     }

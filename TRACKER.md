@@ -84,6 +84,12 @@ w Home Assistant). Wtedy tracker **piszczy 2×** – osoba w terenie wie, że we
 `🆘 SOS ·` na początku meldunku, aplikacja włącza alarm z dźwiękiem, a w domu most włącza alarm w Home Assistant
 i alarm na cały ekran na kiosku.
 
+**Zegar** – T1000-E i XIAO nie mają zegara podtrzymywanego baterią: po restarcie zgadują czas z kontaktów (bywa
+przesunięty o godziny). Dlatego baza przy każdym meldunku porównuje czas trackera ze swoim i przy różnicy ponad 2 min
+odsyła mu właściwy (`#C t=`). Baza polowa robi to tylko wtedy, gdy sama dostała czas z telefonu (aplikacja Tracker
+albo MeshCore ustawia go przy połączeniu); w domu czas daje most z serwera (NTP), który pilnuje też zegara swojego
+węzła (przy połączeniu i co godzinę).
+
 **Słaba bateria** – tracker ostrzega też osobę, która go nosi: przy 20% dwa krótkie sygnały (raz), przy 10% trzy
 sygnały i **oszczędzanie** (meldunek najwyżej co 10 min, flaga `w`, baza dopisuje „oszczędzanie baterii”), chyba że
 trwa SOS albo szukanie. Ostrzeżenia wracają po naładowaniu do 30%. Baza i aplikacja widzą procent w każdym meldunku
