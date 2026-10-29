@@ -7,8 +7,8 @@
 <title>Tracker psa</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
-<link rel="stylesheet" href="vendor/leaflet.css?v=8">
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="vendor/leaflet.css?v=10">
+<link rel="stylesheet" href="app.css?v=10">
 </head>
 <body data-tab="map">
 <header class="bar">
@@ -70,21 +70,22 @@
     <div id="cmd-status" class="cmd-status">Polecenie dojdzie do psa przy jego najbliższym meldunku.</div>
   </section>
 
-  <section class="geo view-map">
-    <h2>Strefa bezpieczna</h2>
-    <p class="hint">Alarm, gdy pies wyjdzie poza okrąg (jak strefy w Traccarze). Środek: Ty, pies albo środek mapy (np. obóz).</p>
-    <label class="inline">Promień
-      <select id="geo-r">
-        <option value="100">100 m</option><option value="200">200 m</option><option value="300" selected>300 m</option>
-        <option value="500">500 m</option><option value="1000">1 km</option><option value="2000">2 km</option>
+  <section class="zones-card view-map">
+    <h2>Strefy</h2>
+    <p class="hint">Alarm, gdy pies wyjdzie ze strefy (sprawdzane przy każdym meldunku).</p>
+    <ol id="zones" class="list zones"></ol>
+    <div class="zone-form">
+      <input id="zone-name" type="text" maxlength="24" placeholder="Nazwa, np. Obóz" aria-label="Nazwa strefy">
+      <select id="zone-r" aria-label="Promień strefy">
+        <option value="50">50 m</option><option value="100">100 m</option><option value="200" selected>200 m</option>
+        <option value="300">300 m</option><option value="500">500 m</option><option value="1000">1 km</option><option value="2000">2 km</option>
       </select>
-    </label>
-    <div class="row-btns">
-      <button id="geo-me" type="button">Wokół mnie</button>
-      <button id="geo-dog" type="button">Wokół psa</button>
-      <button id="geo-map" type="button">Środek mapy</button>
-      <button id="geo-off" type="button">Wyłącz</button>
+      <select id="zone-src" aria-label="Środek strefy">
+        <option value="dog">wokół psa</option><option value="me">wokół mnie</option><option value="map">środek mapy</option>
+      </select>
+      <button id="zone-add" type="button">Dodaj strefę</button>
     </div>
+    <div id="zone-msg" class="hint"></div>
   </section>
 
   <!-- ================= Trasa: odtwarzanie i raport ================= -->
@@ -105,10 +106,12 @@
       <button id="rp-play" class="pill" type="button">▶</button>
       <input id="rp-slider" type="range" min="0" max="0" value="0" aria-label="Pozycja na trasie">
       <select id="rp-speed" aria-label="Szybkość odtwarzania">
-        <option value="1">1×</option><option value="3" selected>3×</option><option value="10">10×</option><option value="30">30×</option>
+        <option value="0.5">½×</option><option value="1" selected>1×</option><option value="3">3×</option><option value="10">10×</option>
       </select>
     </div>
     <div id="rp-info" class="rp-info">Brak pozycji w tym okresie.</div>
+    <canvas id="rp-chart" aria-label="Wykres: bateria (linia) i prędkość (słupki)" hidden></canvas>
+    <p id="rp-empty" class="hint">Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.</p>
   </section>
 
   <section class="report view-replay">
@@ -123,13 +126,22 @@
       <div><dt>Postoje</dt><dd id="r-stops">–</dd></div>
       <div><dt>Bateria</dt><dd id="r-batt">–</dd></div>
     </dl>
-    <h3>Postoje (co najmniej 5 min)</h3>
-    <ol id="r-stoplist" class="list"></ol>
+    <h3>Przejścia i postoje</h3>
+    <ol id="r-trips" class="list trips"></ol>
     <div class="row-btns">
-      <button id="rp-gpx" type="button">Zapisz GPX</button>
-      <button id="rp-csv" type="button">Zapisz CSV</button>
+      <button id="rp-gpx" type="button">GPX</button>
+      <button id="rp-kml" type="button">KML</button>
+      <button id="rp-csv" type="button">CSV</button>
+      <button id="rp-del" type="button" hidden>Usuń ten dzień</button>
     </div>
-    <p class="hint">GPX otworzysz w Organic Maps, OsmAnd, Mapach Google (Moje mapy) albo zaimportujesz później do innych programów.</p>
+    <p class="hint">Plik otworzysz przez „Udostępnij” w Organic Maps, OsmAnd albo Google Earth, albo zaimportujesz później do innych programów.</p>
+  </section>
+
+  <section class="stats-card view-replay">
+    <h2>Ostatnie dni</h2>
+    <canvas id="stats-chart" aria-label="Dystans psa w ostatnich dniach"></canvas>
+    <div id="stats-sum" class="hint"></div>
+    <div id="stats-empty" class="hint">Brak danych.</div>
   </section>
 
   <!-- ================= Radar ================= -->
@@ -163,6 +175,7 @@
     </div>
     <ol id="ev-list" class="list"></ol>
     <p id="ev-empty" class="hint">Brak zdarzeń.</p>
+    <button id="ev-clear" class="chip" type="button">Wyczyść dziennik</button>
   </section>
 
   <!-- ================= Ustawienia ================= -->
@@ -208,8 +221,9 @@
   <button data-tab="events" type="button"><span>🔔</span>Zdarzenia<i id="ev-badge" hidden></i></button>
   <button data-tab="settings" type="button"><span>⚙️</span>Ustawienia</button>
 </nav>
-<script src="vendor/leaflet.js?v=8"></script>
-<script src="lang.js?v=8"></script>
-<script src="app.js?v=8"></script>
+<script src="vendor/leaflet.js?v=10"></script>
+<script src="lang.js?v=10"></script>
+<script src="app.js?v=10"></script>
+<script src="analiza.js?v=10"></script>
 </body>
 </html>

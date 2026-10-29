@@ -211,6 +211,63 @@ const T = {
   'Brak pozycji GPS telefonu.': ['No phone GPS position.', 'Keine GPS-Position des Handys.', 'Žádná poloha GPS telefonu.', 'Ingen GPS-position från telefonen.'],
   'Brak pozycji psa.': ['No dog position.', 'Keine Position des Hundes.', 'Žádná poloha psa.', 'Ingen position för hunden.'],
   'Usunąć zapisane fragmenty mapy? Bez internetu mapa będzie pusta.': ['Delete the saved map tiles? Without internet the map will be empty.', 'Gespeicherte Kartenkacheln löschen? Ohne Internet bleibt die Karte leer.', 'Smazat uložené dlaždice mapy? Bez internetu bude mapa prázdná.', 'Radera sparade kartrutor? Utan internet blir kartan tom.'],
+  // --- v10: analizy z bety (trasa dnia, strefy, zdarzenia, statystyki)
+  'Wyczyść ślad i meldunki': ['Clear track and reports', 'Spur und Meldungen löschen', 'Smazat stopu a hlášení', 'Rensa spår och rapporter'],
+  'Usunąć zapisane meldunki i ślad?': ['Delete the saved reports and track?', 'Gespeicherte Meldungen und Spur löschen?', 'Smazat uložená hlášení a stopu?', 'Radera sparade rapporter och spår?'],
+  'Bezpieczeństwo: zmień domyślny PIN Bluetooth bazy i trackera (123456) na własny – w aplikacji MeshCore, w ustawieniach urządzenia. Ta strona nie wysyła niczego do internetu.': ['Security: change the default Bluetooth PIN of the base and the tracker (123456) to your own – in the MeshCore app, in the device settings. This page sends nothing to the internet.', 'Sicherheit: Ändere die Standard-Bluetooth-PIN von Basis und Tracker (123456) auf eine eigene – in der MeshCore-App, in den Geräteeinstellungen. Diese Seite sendet nichts ins Internet.', 'Bezpečnost: změň výchozí PIN Bluetooth základny a trackeru (123456) na vlastní – v aplikaci MeshCore, v nastavení zařízení. Tato stránka nic neposílá na internet.', 'Säkerhet: byt standard-PIN för Bluetooth på basen och spåraren (123456) till en egen – i MeshCore-appen, i enhetsinställningarna. Den här sidan skickar ingenting till internet.'],
+  'Trasa dnia': ['Route of the day', 'Tagesroute', 'Trasa dne', 'Dagens rutt'],
+  'Poprzedni dzień': ['Previous day', 'Vorheriger Tag', 'Předchozí den', 'Föregående dag'],
+  'Następny dzień': ['Next day', 'Nächster Tag', 'Následující den', 'Nästa dag'],
+  'Dzień': ['Day', 'Tag', 'Den', 'Dag'],
+  'Ślad psa z wybranego dnia': ['The dog’s track on the selected day', 'Spur des Hundes am gewählten Tag', 'Stopa psa ve vybraném dni', 'Hundens spår den valda dagen'],
+  'Czas na trasie': ['Time on the route', 'Zeit auf der Route', 'Čas na trase', 'Tid på rutten'],
+  'Brak zapisanych tras. Trasa zapisuje się sama z meldunków z pozycją GPS.': ['No saved routes yet. The route is saved automatically from reports with a GPS position.', 'Noch keine gespeicherten Routen. Die Route wird automatisch aus Meldungen mit GPS-Position gespeichert.', 'Zatím žádné uložené trasy. Trasa se ukládá sama z hlášení s polohou GPS.', 'Inga sparade rutter ännu. Rutten sparas automatiskt från rapporter med GPS-position.'],
+  'Usuń ten dzień': ['Delete this day', 'Diesen Tag löschen', 'Smazat tento den', 'Radera denna dag'],
+  'Usunąć trasę z dnia {d}?': ['Delete the route from {d}?', 'Route vom {d} löschen?', 'Smazat trasu ze dne {d}?', 'Radera rutten från {d}?'],
+  '{n} pkt': ['{n} pts', '{n} Pkt.', '{n} bodů', '{n} pkt'],
+  'Odtwórz trasę': ['Play the route', 'Route abspielen', 'Přehrát trasu', 'Spela upp rutten'],
+  'Tempo odtwarzania': ['Playback speed', 'Wiedergabetempo', 'Rychlost přehrávání', 'Uppspelningshastighet'],
+  'Wykres: bateria (linia) i prędkość (słupki)': ['Chart: battery (line) and speed (bars)', 'Diagramm: Akku (Linie) und Tempo (Balken)', 'Graf: baterie (čára) a rychlost (sloupce)', 'Diagram: batteri (linje) och hastighet (staplar)'],
+  'Przejście': ['Walk', 'Strecke', 'Přesun', 'Förflyttning'],
+  'śr.': ['avg', 'Ø', 'prům.', 'medel'],
+  'maks.': ['max', 'max.', 'max.', 'max'],
+  'Strefy': ['Zones', 'Zonen', 'Zóny', 'Zoner'],
+  'Dom': ['Home', 'Zuhause', 'Domov', 'Hem'],
+  'Nazwa strefy': ['Zone name', 'Name der Zone', 'Název zóny', 'Zonens namn'],
+  'Promień strefy': ['Zone radius', 'Radius der Zone', 'Poloměr zóny', 'Zonens radie'],
+  'Środek strefy': ['Zone centre', 'Mittelpunkt der Zone', 'Střed zóny', 'Zonens mittpunkt'],
+  'wokół psa': ['around the dog', 'um den Hund', 'kolem psa', 'runt hunden'],
+  'wokół mnie': ['around me', 'um mich', 'kolem mě', 'runt mig'],
+  'Dodaj strefę': ['Add zone', 'Zone hinzufügen', 'Přidat zónu', 'Lägg till zon'],
+  'Alarm, gdy pies wyjdzie ze strefy (sprawdzane przy każdym meldunku).': ['Alarm when the dog leaves a zone (checked at every report).', 'Alarm, wenn der Hund eine Zone verlässt (bei jeder Meldung geprüft).', 'Poplach, když pes opustí zónu (kontroluje se při každém hlášení).', 'Larm när hunden lämnar en zon (kontrolleras vid varje rapport).'],
+  'Brak stref. Dodaj strefę, a aplikacja zaalarmuje, gdy pies z niej wyjdzie.': ['No zones. Add one and the app will alarm when the dog leaves it.', 'Keine Zonen. Füge eine hinzu, dann alarmiert die App, wenn der Hund sie verlässt.', 'Žádné zóny. Přidej zónu a aplikace spustí poplach, když z ní pes odejde.', 'Inga zoner. Lägg till en så larmar appen när hunden lämnar den.'],
+  'Strefa włączona': ['Zone enabled', 'Zone aktiv', 'Zóna zapnuta', 'Zon aktiverad'],
+  'pies w strefie': ['dog inside', 'Hund drin', 'pes uvnitř', 'hunden innanför'],
+  'pies poza strefą': ['dog outside', 'Hund draußen', 'pes venku', 'hunden utanför'],
+  'Usuń strefę': ['Delete zone', 'Zone löschen', 'Smazat zónu', 'Radera zon'],
+  'Usunąć strefę „{n}”?': ['Delete zone “{n}”?', 'Zone „{n}“ löschen?', 'Smazat zónu „{n}“?', 'Radera zonen ”{n}”?'],
+  'Brak pozycji telefonu.': ['No phone position.', 'Keine Handyposition.', 'Žádná poloha telefonu.', 'Ingen telefonposition.'],
+  'Dodano strefę „{n}”.': ['Zone “{n}” added.', 'Zone „{n}“ hinzugefügt.', 'Zóna „{n}“ přidána.', 'Zonen ”{n}” tillagd.'],
+  'Wyczyść dziennik': ['Clear log', 'Protokoll leeren', 'Vymazat záznam', 'Rensa loggen'],
+  'Wyczyścić dziennik zdarzeń?': ['Clear the event log?', 'Ereignisprotokoll leeren?', 'Vymazat záznam událostí?', 'Rensa händelseloggen?'],
+  'Niska bateria trackera: {p}%': ['Tracker battery low: {p}%', 'Tracker-Akku schwach: {p}%', 'Slabá baterie trackeru: {p}%', 'Låg batterinivå i spåraren: {p}%'],
+  'Tracker stracił GPS': ['Tracker lost GPS', 'Tracker hat GPS verloren', 'Tracker ztratil GPS', 'Spåraren tappade GPS'],
+  'Szybki bieg: {v}': ['Running fast: {v}', 'Schnelles Laufen: {v}', 'Rychlý běh: {v}', 'Snabb löpning: {v}'],
+  'Pies wrócił do strefy „{n}”': ['The dog is back in zone “{n}”', 'Der Hund ist zurück in Zone „{n}“', 'Pes se vrátil do zóny „{n}“', 'Hunden är tillbaka i zonen ”{n}”'],
+  'Pies wyszedł ze strefy „{n}” ({d} od środka)': ['The dog left zone “{n}” ({d} from the centre)', 'Der Hund hat Zone „{n}“ verlassen ({d} vom Mittelpunkt)', 'Pes opustil zónu „{n}“ ({d} od středu)', 'Hunden lämnade zonen ”{n}” ({d} från mittpunkten)'],
+  'Ostatnie dni': ['Recent days', 'Letzte Tage', 'Poslední dny', 'Senaste dagarna'],
+  'Dystans psa w ostatnich dniach': ['The dog’s distance in recent days', 'Strecke des Hundes in den letzten Tagen', 'Vzdálenost psa v posledních dnech', 'Hundens sträcka de senaste dagarna'],
+  'Brak danych.': ['No data.', 'Keine Daten.', 'Žádná data.', 'Inga data.'],
+  '{n} dni · razem {d} · w ruchu {a}': ['{n} days · total {d} · moving {a}', '{n} Tage · gesamt {d} · in Bewegung {a}', '{n} dní · celkem {d} · v pohybu {a}', '{n} dagar · totalt {d} · i rörelse {a}'],
+  'Start': ['Start', 'Start', 'Start', 'Start'],
+  'Przejścia i postoje': ['Walks and stops', 'Strecken und Stopps', 'Přesuny a zastávky', 'Förflyttningar och stopp'],
+  'Brak przejść i postojów.': ['No walks or stops.', 'Keine Strecken oder Stopps.', 'Žádné přesuny ani zastávky.', 'Inga förflyttningar eller stopp.'],
+  'brak stref': ['no zones', 'keine Zonen', 'žádné zóny', 'inga zoner'],
+  'Obóz': ['Camp', 'Lager', 'Tábor', 'Läger'],
+  'środek mapy': ['map centre', 'Kartenmitte', 'střed mapy', 'kartans mitt'],
+  'Nazwa, np. Obóz': ['Name, e.g. Camp', 'Name, z. B. Lager', 'Název, např. Tábor', 'Namn, t.ex. Läger'],
+  'Plik otworzysz przez „Udostępnij” w Organic Maps, OsmAnd albo Google Earth, albo zaimportujesz później do innych programów.': ['Open the file via “Share” in Organic Maps, OsmAnd or Google Earth, or import it into other programs later.', 'Öffne die Datei über „Teilen“ in Organic Maps, OsmAnd oder Google Earth oder importiere sie später in andere Programme.', 'Soubor otevřeš přes „Sdílet“ v Organic Maps, OsmAnd nebo Google Earth, případně ho později importuješ do jiných programů.', 'Öppna filen via ”Dela” i Organic Maps, OsmAnd eller Google Earth, eller importera den i andra program senare.'],
+  'Historia tras: {d} dni, {p} pozycji.': ['Route history: {d} days, {p} positions.', 'Routenverlauf: {d} Tage, {p} Positionen.', 'Historie tras: {d} dní, {p} poloh.', 'Rutthistorik: {d} dagar, {p} positioner.'],
 };
 
 const DICT = {};
@@ -241,8 +298,8 @@ function applyLang(root) {
     const k = norm(n.nodeValue);
     if (k && DICT[k]) n.nodeValue = n.nodeValue.replace(/\S[\s\S]*\S|\S/, t(k));
   }
-  for (const el of root.querySelectorAll('[title],[aria-label],[data-confirm]')) {
-    for (const a of ['title', 'aria-label', 'data-confirm']) {
+  for (const el of root.querySelectorAll('[title],[aria-label],[data-confirm],[placeholder]')) {
+    for (const a of ['title', 'aria-label', 'data-confirm', 'placeholder']) {
       const v = el.getAttribute(a);
       if (v && DICT[norm(v)]) el.setAttribute(a, t(v));
     }

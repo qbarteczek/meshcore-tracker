@@ -3,10 +3,10 @@
 // przeglądarce trzymać .js przez kilka godzin, więc inaczej nowa wersja instalowałaby stare pliki.
 // Kafelki mapy OSM: każdy obejrzany kafelek zostaje w osobnej pamięci (nie znika przy nowej wersji aplikacji),
 // najpierw z pamięci, z sieci tylko brakujące; najstarsze usuwane powyżej MAX_TILES.
-const CACHE = 'tracker-psa-v8';
+const CACHE = 'tracker-psa-v10';
 const TILES = 'tracker-psa-tiles';
 const MAX_TILES = 6000;   // ok. 100–150 MB
-const FILES = ['./', 'index.html', 'app.css', 'lang.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
+const FILES = ['./', 'index.html', 'app.css', 'lang.js', 'app.js', 'analiza.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'vendor/leaflet.js', 'vendor/leaflet.css'];
 
 const key = (url) => { const u = new URL(url, self.location.href); u.search = ''; u.hash = ''; return u.href; };

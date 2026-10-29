@@ -173,6 +173,20 @@ body[data-tab="radar"] .maps { display: grid; }
 .tabs i { position: absolute; top: 4px; left: calc(50% + 8px); min-width: 16px; height: 16px; border-radius: 8px;
   background: var(--warn); color: #fff; font: 700 .65rem/16px system-ui, sans-serif; font-style: normal; padding: 0 4px; }
 
+/* ---------- strefy, przejścia, wykresy (analiza.js) ---------- */
+.zones li { align-items: center; }
+.zones li input[type="checkbox"] { flex: none; width: 20px; height: 20px; accent-color: var(--geo); }
+.list .x.bad { color: var(--warn); font-weight: 600; }
+.zone-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.zone-form input { grid-column: span 2; }
+.zone-form button { grid-column: span 2; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-weight: 600; }
+.trips { max-height: 320px; overflow: auto; }
+.trips li.stop .x { color: var(--warn); }
+.trips li.sel { background: color-mix(in srgb, var(--me) 14%, transparent); }
+#rp-chart, #stats-chart { width: 100%; display: block; margin-top: 10px; }
+#ev-clear { margin-top: 10px; }
+button:disabled { opacity: .4; }
+
 @media (min-width: 900px) {
   #map { height: 60vh; }
 }

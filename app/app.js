@@ -2,11 +2,12 @@
 // Łączy się przez Web Bluetooth z companionem MeshCore (firmware TRACKER_BASE), czyta meldunki trackera
 // (czytelne wiadomości od kontaktu trackera) i wysyła polecenia (#SZUKAJ, #STOP, #CO n, #BT, #DOM).
 // Protokół: companion BLE MeshCore (Nordic UART), jedna ramka = jedna wartość charakterystyki.
-// Widoki jak w Traccarze: mapa z kartą urządzenia, odtwarzanie trasy z raportem, strefa (geofence), zdarzenia.
+// Widoki jak w Traccarze: mapa z kartą urządzenia, trasa (odtwarzanie, raport, przejścia i postoje, wykres),
+// strefy (geofence), zdarzenia. Analizy i historia po dniach są w analiza.js.
 // Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-8';
+const VERSION = 'trk2-app-10-beta';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -16,10 +17,8 @@ const RESP = { OK: 0, ERR: 1, CONTACTS_START: 2, CONTACT: 3, END_CONTACTS: 4, SE
   MSG: 7, NO_MORE: 10, DEVICE_INFO: 13, MSG_V3: 16 };
 const PUSH = { ADVERT: 0x80, SEND_CONFIRMED: 0x82, MSG_WAITING: 0x83, NEW_ADVERT: 0x8a };
 
-const MAX_REPORTS = 10000;     // ok. 1 MB w pamięci telefonu; przy meldunku co minutę – prawie tydzień
-const MAX_EVENTS = 500;
+const MAX_REPORTS = 3000;      // ostatnie meldunki (mapa na żywo, radar); pełna historia po dniach: IndexedDB (analiza.js)
 const JUMP_KMH = 80;           // szybsze "przeskoki" to błąd GPS, nie bieg psa – pomijane w dystansie
-const STOP_M = 40, STOP_MS = 5 * 60000;   // postój: 5 min w promieniu 40 m
 
 const $ = (id) => document.getElementById(id);
 const enc = new TextEncoder();
@@ -41,16 +40,13 @@ const S = {
   dogName: store.get('dogname', ''),
   reports: store.get('reports', []),           // {t, lat, lon, fix, mv, pct, temp, sats, int, search, text, spd, crs}
   myTrail: store.get('mytrail', []),           // [lat, lon, t]
-  events: store.get('events', []),             // {t, type, text, lat?, lon?}
-  geo: store.get('geo', null),                 // {lat, lon, r}
-  geoInside: store.get('geoin', null),
-  battWarn: store.get('battwarn', true), battLow: store.get('battlow', false),
+  battWarn: store.get('battwarn', true),
   me: null, heading: null, northUp: store.get('northup', true),
-  tab: store.get('tab', 'map'), follow: store.get('follow', true), evFilter: 'ev', evSeen: store.get('evseen', 0),
+  tab: store.get('tab', 'map'), follow: store.get('follow', true),
   pendingCmd: null,                            // {text, ack, t, button}
   alarmShown: false, alarmMuted: 0, sound: store.get('sound', true), wake: null, lateEvent: false,
   syncing: false, writeChain: Promise.resolve(),
-  rp: { list: [], cum: [], idx: 0, timer: null },
+  rp: { list: [], cum: [], idx: 0, timer: null, segs: [], sel: null },
 };
 
 // ------------------------------------------------------------------ Bluetooth
@@ -246,8 +242,7 @@ function onMessage(prefix, ts, text) {
   r.t = ts > 1.6e9 && ts * 1000 < now + 120000 ? ts * 1000 : now;   // czas bazy (ustawiany z telefonu)
   r.text = text.split('\n')[0];
   if (r.alarm) {
-    addEvent('alarm', r.text, r.lat != null ? r : null);
-    showAlarm(r.text);
+    addEvent('alarm', r.text, true, r.t, r.lat != null ? r : null);
     return;
   }
   const prev = lastReport();
@@ -256,15 +251,12 @@ function onMessage(prefix, ts, text) {
   if (S.reports.length > MAX_REPORTS) S.reports.splice(0, S.reports.length - MAX_REPORTS);
   store.set('reports', S.reports);
   S.lateEvent = false;
-  if (r.back) addEvent('back', t('Kontakt z psem wrócił'), r.fix ? r : null);
-  if (r.search && !(prev && prev.search)) addEvent('search', t('Szukanie włączone (meldunek co 30 s)'));
-  if (!r.search && prev && prev.search) addEvent('search', t('Szukanie zakończone'));
-  checkBattery(r);
-  checkGeo(r);
   hideAlarm();
+  checkEvents(r, prev);                             // strefy, bateria, szybki bieg… (analiza.js)
+  if (r.fix) histAdd([r]).then(() => { if (S.tab === 'replay') { fillDays(); loadReplay(false); } });
   if (S.follow && r.fix && map) map.panTo([r.lat, r.lon]);
   render();
-  if (S.evFilter === 'rep') renderEvents();
+  if (A.evFilter === 'rep') renderEvents();
 }
 
 function lastReport() { return S.reports.length ? S.reports[S.reports.length - 1] : null; }
@@ -274,67 +266,7 @@ function lastFix() {
 }
 const fixes = () => S.reports.filter((r) => r.fix);
 
-// ------------------------------------------------------------------ zdarzenia, strefa, bateria
-
-const EV_ICON = { alarm: '⚠️', late: '⏱️', geoout: '🚧', geoin: '✅', batt: '🪫', search: '🔍', cmd: '📨',
-  conn: '🔗', disc: '🔌', back: '✅', geoset: '⭕' };
-const EV_ALARM = ['alarm', 'late', 'geoout', 'batt'];
-const EV_GOOD = ['geoin', 'back'];
-
-function addEvent(type, text, pos) {
-  const e = { t: Date.now(), type, text };
-  if (pos && pos.lat != null) { e.lat = pos.lat; e.lon = pos.lon; }
-  S.events.push(e);
-  if (S.events.length > MAX_EVENTS) S.events.splice(0, S.events.length - MAX_EVENTS);
-  store.set('events', S.events);
-  renderEvents();
-}
-
-function checkBattery(r) {
-  if (r.pct == null) return;
-  if (r.pct <= 20 && !S.battLow) {
-    S.battLow = true;
-    if (S.battWarn) {
-      const msg = tf('Słaba bateria psa: {p}%', { p: r.pct });
-      addEvent('batt', msg);
-      notify(msg);
-    }
-  } else if (r.pct >= 25 && S.battLow) S.battLow = false;
-  store.set('battlow', S.battLow);
-}
-
-function checkGeo(r) {
-  if (!S.geo || !r.fix) return;
-  const d = distM(S.geo.lat, S.geo.lon, r.lat, r.lon);
-  const inside = d <= S.geo.r;
-  if (inside !== S.geoInside) {
-    if (!inside) {
-      const msg = tf('Pies poza strefą: {d} od środka', { d: fmtDist(d) });
-      addEvent('geoout', msg, r);
-      showAlarm(msg);
-    } else if (S.geoInside === false) addEvent('geoin', t('Pies wrócił do strefy'), r);
-  }
-  S.geoInside = inside;
-  store.set('geoin', inside);
-}
-
-function setGeo(center) {
-  if (!center) {
-    S.geo = null; S.geoInside = null;
-    addEvent('geoset', t('Strefa wyłączona'));
-  } else {
-    const r = parseInt($('geo-r').value, 10);
-    S.geo = { lat: center.lat, lon: center.lon, r };
-    S.geoInside = null;
-    addEvent('geoset', tf('Strefa {r} ustawiona', { r: fmtDist(r) }), center);
-    const f = lastFix();
-    if (f) checkGeo(f);
-  }
-  store.set('geo', S.geo); store.set('geoin', S.geoInside);
-  drawGeo();
-  if (S.geo && map) map.fitBounds(geoCircle.getBounds(), { padding: [20, 20] });
-  render();
-}
+// ------------------------------------------------------------------ powiadomienia
 
 function notify(text) {
   if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
@@ -410,18 +342,6 @@ function pathStats(list) {
   return { cum, dist, move, max, far };
 }
 
-function findStops(list) {
-  const out = [];
-  let i = 0;
-  while (i < list.length) {
-    let j = i;
-    while (j + 1 < list.length && distM(list[i].lat, list[i].lon, list[j + 1].lat, list[j + 1].lon) <= STOP_M) j++;
-    if (list[j].t - list[i].t >= STOP_MS) { out.push({ a: i, b: j, t0: list[i].t, t1: list[j].t, lat: list[i].lat, lon: list[i].lon }); i = j + 1; }
-    else i++;
-  }
-  return out;
-}
-
 // ------------------------------------------------------------------ GPS i kompas telefonu
 
 function startSensors() {
@@ -449,7 +369,7 @@ function startSensors() {
 // ------------------------------------------------------------------ mapa (Leaflet + OSM)
 
 let map = null, tiles = null, dogMarker = null, meMarker = null, meAcc = null, dogLine = null, myLine = null,
-  dots = null, geoCircle = null, rpLine = null, rpMarker = null, rpStops = null, lastDotsN = -1;
+  dots = null, zonesLayer = null, rpLine = null, rpSel = null, rpMarker = null, rpStops = null, lastDotsN = -1;
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function pinIcon(cls, crs, label) {
@@ -469,7 +389,7 @@ function initMap() {
   }).addTo(map);
   L.control.scale({ imperial: false }).addTo(map);
   const dog = cssVar('--dog'), me = cssVar('--me');
-  geoCircle = L.circle([0, 0], { radius: 1, color: cssVar('--geo'), weight: 2, dashArray: '6 6', fillOpacity: 0.06, interactive: false });
+  zonesLayer = L.layerGroup().addTo(map);
   myLine = L.polyline([], { color: me, weight: 3, opacity: 0.5, dashArray: '4 8', interactive: false }).addTo(map);
   dogLine = L.polyline([], { color: dog, weight: 4, opacity: 0.75 }).addTo(map);
   dots = L.layerGroup().addTo(map);
@@ -477,10 +397,10 @@ function initMap() {
   meMarker = L.circleMarker([0, 0], { radius: 7, color: '#fff', weight: 3, fillColor: me, fillOpacity: 1 });
   dogMarker = L.marker([0, 0], { icon: pinIcon('', null), zIndexOffset: 1000 }).bindPopup(() => fixPopup(lastFix(), true));
   rpLine = L.polyline([], { color: cssVar('--replay'), weight: 4, opacity: 0.85 });
+  rpSel = L.polyline([], { color: cssVar('--me'), weight: 8, opacity: 0.55, interactive: false });
   rpStops = L.layerGroup();
   rpMarker = L.marker([0, 0], { icon: pinIcon('rp', null), zIndexOffset: 1100 });
   map.on('dragstart', () => { if (S.follow && S.tab === 'map') { S.follow = false; store.set('follow', false); followUI(); } });
-  drawGeo();
 }
 
 function fixPopup(f, live) {
@@ -525,12 +445,6 @@ function drawMap() {
   }
 }
 
-function drawGeo() {
-  if (!map) return;
-  if (S.geo) { geoCircle.setLatLng([S.geo.lat, S.geo.lon]).setRadius(S.geo.r); if (!map.hasLayer(geoCircle)) geoCircle.addTo(map); }
-  else if (map.hasLayer(geoCircle)) geoCircle.remove();
-}
-
 function centerOn(what) {
   if (!map) return;
   const f = S.tab === 'replay' ? S.rp.list[S.rp.idx] : lastFix();
@@ -541,7 +455,7 @@ function centerOn(what) {
     if (S.tab === 'replay') S.rp.list.forEach((r) => pts.push([r.lat, r.lon]));
     else { if (f) pts.push([f.lat, f.lon]); dogLine.getLatLngs().forEach((p) => pts.push(p)); }
     if (S.me) pts.push([S.me.lat, S.me.lon]);
-    if (S.geo) { const b = geoCircle.getBounds(); pts.push(b.getNorthEast(), b.getSouthWest()); }
+    for (const z of A.zones) if (z.on) { const b = L.latLng(z.lat, z.lon).toBounds(z.r * 2); pts.push(b.getNorthEast(), b.getSouthWest()); }
     if (pts.length > 1) map.fitBounds(pts, { padding: [30, 30], maxZoom: 17 });
     else if (pts.length) map.setView(pts[0], 16);
   }
@@ -550,141 +464,6 @@ function centerOn(what) {
 function followUI() {
   $('btn-follow').classList.toggle('on', S.follow);
   $('btn-follow').textContent = S.follow ? t('Śledzę psa') : t('Śledź psa');
-}
-
-// ------------------------------------------------------------------ trasa (odtwarzanie i raport)
-
-function rangeOf(key) {
-  const now = Date.now(), d0 = new Date(); d0.setHours(0, 0, 0, 0);
-  const day = d0.getTime();
-  if (key === 'h1') return [now - 3600e3, now + 1];
-  if (key === 'h6') return [now - 6 * 3600e3, now + 1];
-  if (key === 'today') return [day, now + 1];
-  if (key === 'yday') return [day - 864e5, day];
-  if (key.startsWith('d:')) { const a = new Date(key.slice(2) + 'T00:00:00').getTime(); return [a, a + 864e5]; }
-  return [0, now + 1];
-}
-
-function fillDays() {
-  const sel = $('rp-range'), keep = sel.value;
-  sel.querySelectorAll('option[data-day]').forEach((o) => o.remove());
-  const days = [...new Set(fixes().map((r) => { const d = new Date(r.t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }))];
-  for (const d of days.reverse()) {
-    const o = new Option(new Date(d + 'T12:00:00').toLocaleDateString(LANG, { weekday: 'short', day: 'numeric', month: 'long' }), 'd:' + d);
-    o.dataset.day = '1';
-    sel.add(o);
-  }
-  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : 'today';
-}
-
-function loadReplay(fit) {
-  stopPlay();
-  const [a, b] = rangeOf($('rp-range').value);
-  const list = fixes().filter((r) => r.t >= a && r.t < b);
-  const st = pathStats(list);
-  S.rp.list = list; S.rp.cum = st.cum;
-  $('rp-slider').max = Math.max(0, list.length - 1);
-  $('rp-count').textContent = list.length ? tf('{n} pozycji', { n: list.length }) : '';
-  if (map) {
-    rpLine.setLatLngs(list.map((r) => [r.lat, r.lon]));
-    rpStops.clearLayers();
-  }
-  const stops = findStops(list);
-  // raport
-  const dash = '–';
-  $('r-dist').textContent = list.length > 1 ? fmtDist(st.dist) : dash;
-  $('r-dur').textContent = list.length > 1 ? dur(list[list.length - 1].t - list[0].t) : dash;
-  $('r-move').textContent = list.length > 1 ? dur(st.move * 1000) : dash;
-  $('r-avg').textContent = st.move > 60 ? fmtSpd((st.dist / st.move) * 3.6) : dash;
-  $('r-max').textContent = list.length > 1 ? fmtSpd(st.max) : dash;
-  $('r-far').textContent = list.length > 1 ? fmtDist(st.far) : dash;
-  $('r-stops').textContent = list.length ? stops.length + (stops.length ? ' · ' + dur(stops.reduce((s, x) => s + x.t1 - x.t0, 0)) : '') : dash;
-  const withB = list.filter((r) => r.pct != null);
-  $('r-batt').textContent = withB.length ? withB[0].pct + '% → ' + withB[withB.length - 1].pct + '%' : dash;
-  const ol = $('r-stoplist');
-  ol.textContent = '';
-  for (const s of stops) {
-    const li = document.createElement('li');
-    li.className = 'click';
-    li.innerHTML = `<span class="i">⏸️</span><span class="x">${esc(hm(s.t0) + '–' + hm(s.t1) + ' · ' + dur(s.t1 - s.t0))}</span>`;
-    li.addEventListener('click', () => { setIdx(s.a); if (map) map.setView([s.lat, s.lon], 17); window.scrollTo({ top: 0, behavior: 'smooth' }); });
-    ol.append(li);
-    if (map) L.circleMarker([s.lat, s.lon], { radius: 8, color: cssVar('--replay'), weight: 2, fillColor: '#fff', fillOpacity: 0.9 })
-      .bindPopup(`<b>${esc(t('Postój'))}</b><br>${esc(hm(s.t0) + '–' + hm(s.t1))}<br>${esc(dur(s.t1 - s.t0))}`).addTo(rpStops);
-  }
-  if (!stops.length) ol.innerHTML = `<li><span class="x muted">${esc(t('Brak postojów.'))}</span></li>`;
-  setIdx(list.length ? list.length - 1 : 0);
-  if (fit && map && list.length > 1) map.fitBounds(rpLine.getBounds(), { padding: [30, 30], maxZoom: 17 });
-  else if (fit && map && list.length) map.setView([list[0].lat, list[0].lon], 16);
-}
-
-function setIdx(i) {
-  const list = S.rp.list;
-  S.rp.idx = Math.max(0, Math.min(i, list.length - 1));
-  $('rp-slider').value = S.rp.idx;
-  const r = list[S.rp.idx];
-  if (!r) { $('rp-info').textContent = t('Brak pozycji w tym okresie.'); if (map && map.hasLayer(rpMarker)) rpMarker.remove(); return; }
-  const parts = [`<b>${esc(hms(r.t))}</b>${sameDay(r.t, Date.now()) ? '' : ' · ' + esc(new Date(r.t).toLocaleDateString(LANG))}`,
-    esc(t('od startu') + ' ' + fmtDist(S.rp.cum[S.rp.idx] || 0))];
-  if (r.spd != null) parts.push(esc(fmtSpd(r.spd)));
-  if (r.pct != null) parts.push(esc(t('bateria') + ' ' + r.pct + '%'));
-  parts.push(esc(fmtPos(r)));
-  $('rp-info').innerHTML = parts.join(' · ');
-  if (map && S.tab === 'replay') {
-    rpMarker.setLatLng([r.lat, r.lon]).setIcon(pinIcon('rp', r.spd >= 1.5 ? r.crs : null, hm(r.t)));
-    if (!map.hasLayer(rpMarker)) rpMarker.addTo(map);
-    if (S.rp.timer && !map.getBounds().pad(-0.1).contains([r.lat, r.lon])) map.panTo([r.lat, r.lon]);
-  }
-}
-
-function togglePlay() {
-  if (S.rp.timer) { stopPlay(); return; }
-  if (S.rp.list.length < 2) return;
-  if (S.rp.idx >= S.rp.list.length - 1) setIdx(0);
-  $('rp-play').textContent = '⏸';
-  const step = () => {
-    if (S.rp.idx >= S.rp.list.length - 1) { stopPlay(); return; }
-    setIdx(S.rp.idx + 1);
-  };
-  S.rp.timer = setInterval(step, 1000 / parseInt($('rp-speed').value, 10));
-}
-function stopPlay() { if (S.rp.timer) clearInterval(S.rp.timer); S.rp.timer = null; $('rp-play').textContent = '▶'; }
-
-function replayLayers(on) {
-  if (!map) return;
-  for (const l of [rpLine, rpStops]) { if (on && !map.hasLayer(l)) l.addTo(map); if (!on && map.hasLayer(l)) l.remove(); }
-  if (!on && map.hasLayer(rpMarker)) rpMarker.remove();
-  if (!on) stopPlay();
-}
-
-// eksport (pobieranie pliku działa bez internetu)
-function download(text, name, type) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement('a');
-  a.href = url; a.download = name;
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
-function fileStamp(list) {
-  const d = new Date(list.length ? list[0].t : Date.now()), p = (n) => String(n).padStart(2, '0');
-  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
-}
-function exportGpx() {
-  const list = S.rp.list;
-  if (!list.length) return;
-  const pts = list.map((r) => `<trkpt lat="${r.lat.toFixed(6)}" lon="${r.lon.toFixed(6)}"><time>${new Date(r.t).toISOString()}</time>`
-    + (r.spd != null ? `<extensions><speed>${(r.spd / 3.6).toFixed(2)}</speed></extensions>` : '') + '</trkpt>').join('\n');
-  download(`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="tracker-psa ${VERSION}" xmlns="http://www.topografix.com/GPX/1/1">\n`
-    + `<trk><name>${esc(dogName() + ' ' + when(list[0].t))}</name><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`,
-  'pies-' + fileStamp(list) + '.gpx', 'application/gpx+xml');
-}
-function exportCsv() {
-  const list = S.rp.list;
-  if (!list.length) return;
-  const rows = ['czas;lat;lon;predkosc_kmh;kurs;bateria_proc;bateria_v;temperatura_c;satelity;odstep_s'];
-  for (const r of list) rows.push([new Date(r.t).toISOString(), r.lat.toFixed(6), r.lon.toFixed(6), r.spd != null ? r.spd.toFixed(1) : '',
-    r.crs != null ? Math.round(r.crs) : '', r.pct ?? '', r.mv ? (r.mv / 1000).toFixed(3) : '', r.temp ?? '', r.sats ?? '', r.int ?? ''].join(';'));
-  download(rows.join('\n') + '\n', 'pies-' + fileStamp(list) + '.csv', 'text/csv');
 }
 
 // ------------------------------------------------------------------ radar
@@ -729,12 +508,14 @@ function drawRadar() {
     g.fillText(t('czekam na pozycję'), c, c + 5);
     return;
   }
-  // strefa
-  if (S.geo) {
-    const [gx, gy] = proj(S.geo.lat, S.geo.lon);
-    g.strokeStyle = col('--geo'); g.setLineDash([6, 6]); g.lineWidth = 2;
-    g.beginPath(); g.arc(gx, gy, (S.geo.r / range) * rad, 0, 2 * Math.PI); g.stroke(); g.setLineDash([]);
+  // strefy
+  g.strokeStyle = col('--geo'); g.setLineDash([6, 6]); g.lineWidth = 2;
+  for (const z of A.zones) {
+    if (!z.on) continue;
+    const [gx, gy] = proj(z.lat, z.lon);
+    g.beginPath(); g.arc(gx, gy, (z.r / range) * rad, 0, 2 * Math.PI); g.stroke();
   }
+  g.setLineDash([]);
   g.strokeStyle = col('--me'); g.globalAlpha = 0.35; g.lineWidth = 2; g.beginPath();
   S.myTrail.slice(-200).forEach(([la, lo], i) => { const [x, y] = proj(la, lo); i ? g.lineTo(x, y) : g.moveTo(x, y); });
   g.stroke(); g.globalAlpha = 1;
@@ -816,10 +597,8 @@ function render() {
   }
   setText('a-spd', fix && fix.spd != null ? fmtSpd(fix.spd) + (fix.spd >= 1.5 && fix.crs != null ? ' · ' + dirName(fix.crs) : '') : '–');
   setText('a-pos', fix ? fmtPos(fix) + ' · ' + hm(fix.t) : '–');
-  if (S.geo && fix) {
-    const d = distM(S.geo.lat, S.geo.lon, fix.lat, fix.lon);
-    setText('a-geo', (d <= S.geo.r ? t('w strefie') : t('POZA strefą')) + ' · ' + fmtDist(d) + ' / ' + fmtDist(S.geo.r), d <= S.geo.r ? 'good' : 'bad');
-  } else setText('a-geo', S.geo ? tf('strefa {r}', { r: fmtDist(S.geo.r) }) : t('wyłączona'), '');
+  const zs = zonesStatus(fix);
+  setText('a-geo', zs.text, zs.cls);
   const today = fixes().filter((r) => sameDay(r.t, Date.now()));
   setText('a-today', today.length > 1 ? fmtDist(pathStats(today).dist) : '–');
 
@@ -840,34 +619,6 @@ function render() {
   if (S.tab === 'radar') drawRadar();
   if (S.tab !== 'replay') drawMap();
   else if (map && S.me) { meMarker.setLatLng([S.me.lat, S.me.lon]); meAcc.setLatLng([S.me.lat, S.me.lon]).setRadius(S.me.acc || 1); }
-}
-
-// ------------------------------------------------------------------ zdarzenia (lista)
-
-function renderEvents() {
-  const ol = $('ev-list');
-  ol.textContent = '';
-  let items;
-  if (S.evFilter === 'rep') {
-    items = S.reports.slice(-200).reverse().map((r) => ({ t: r.t, icon: r.fix ? '📍' : '❔', text: r.text || '', lat: r.fix ? r.lat : null, lon: r.lon, cls: '' }));
-  } else {
-    items = S.events.filter((e) => S.evFilter === 'ev' || EV_ALARM.includes(e.type)).slice(-300).reverse()
-      .map((e) => ({ t: e.t, icon: EV_ICON[e.type] || '•', text: e.text, lat: e.lat, lon: e.lon,
-        cls: EV_ALARM.includes(e.type) ? 'warn' : EV_GOOD.includes(e.type) ? 'good' : '' }));
-  }
-  for (const it of items) {
-    const li = document.createElement('li');
-    li.className = it.cls + (it.lat != null ? ' click' : '');
-    li.innerHTML = `<span class="i">${it.icon}</span><span class="x">${esc(it.text)}</span><time>${esc(when(it.t))}</time>`;
-    if (it.lat != null) li.addEventListener('click', () => { showTab('map'); S.follow = false; followUI(); if (map) map.setView([it.lat, it.lon], 17); });
-    ol.append(li);
-  }
-  $('ev-empty').hidden = items.length > 0;
-  // licznik nowych alarmów na zakładce
-  const unseen = S.events.filter((e) => e.t > S.evSeen && EV_ALARM.includes(e.type)).length;
-  const badge = $('ev-badge');
-  if (S.tab === 'events') { S.evSeen = Date.now(); store.set('evseen', S.evSeen); badge.hidden = true; }
-  else { badge.hidden = !unseen; badge.textContent = unseen > 9 ? '9+' : unseen; }
 }
 
 // ------------------------------------------------------------------ alarm
@@ -902,7 +653,7 @@ function checkLate() {
     if ($('alarm').hidden || (Math.floor(late / 60000) !== S.lastLateMin)) {
       S.lastLateMin = Math.floor(late / 60000);
       const msg = tf('Brak meldunku od {n} min', { n: mins });
-      if (!S.lateEvent) { S.lateEvent = true; addEvent('late', msg, lastFix()); }
+      if (!S.lateEvent) { S.lateEvent = true; addEvent('late', msg, false, Date.now(), lastFix()); }
       showAlarm(msg + (S.connected ? '' : ' ' + t('(baza rozłączona!)')));
     }
   }
@@ -937,7 +688,7 @@ function showTab(tab) {
     setTimeout(() => map.invalidateSize(), 0);
     replayLayers(tab === 'replay');
   }
-  if (tab === 'replay') { fillDays(); loadReplay(prev !== 'replay'); }
+  if (tab === 'replay') fillDays().then(() => loadReplay(prev !== 'replay'));
   if (tab === 'events') renderEvents();
   if (tab === 'settings') dataInfo();
   render();
@@ -947,9 +698,9 @@ function showTab(tab) {
 async function dataInfo() {
   const kb = Math.round(((localStorage.getItem('trk.reports') || '').length + (localStorage.getItem('trk.events') || '').length
     + (localStorage.getItem('trk.mytrail') || '').length) / 1024);
-  const fx = fixes();
-  $('data-info').textContent = tf('W telefonie: {n} meldunków, {e} zdarzeń, ok. {kb} kB.', { n: S.reports.length, e: S.events.length, kb })
-    + (fx.length ? ' ' + tf('Od {d}.', { d: when(fx[0].t) }) : '');
+  const days = await histDays();
+  $('data-info').textContent = tf('W telefonie: {n} meldunków, {e} zdarzeń, ok. {kb} kB.', { n: S.reports.length, e: A.events.length, kb })
+    + ' ' + tf('Historia tras: {d} dni, {p} pozycji.', { d: days.length, p: days.reduce((a, d) => a + d.n, 0) });
   try {
     const c = await caches.open('tracker-psa-tiles');
     const n = (await c.keys()).length;
@@ -986,14 +737,20 @@ function demo() {
   }
   prepReports();
   S.myTrail = Array.from({ length: 40 }, (_, i) => [lat0 + 0.0001 * i, lon0 + 0.00015 * i, now - (40 - i) * 180000]);
-  S.geo = { lat: lat0 + 0.006, lon: lon0 + 0.008, r: 1000 };
-  S.geoInside = true;
-  S.events = [
+  A.zones = [{ id: 'demo', name: t('Obóz'), lat: lat0 + 0.016, lon: lon0 + 0.02, r: 2000, on: true }];
+  A.inside = { demo: true };
+  A.events = [
     { t: now - 125 * 60000, type: 'conn', text: tf('Połączono z bazą {name}.', { name: 'BAZA2' }) },
-    { t: now - 119 * 60000, type: 'geoset', text: tf('Strefa {r} ustawiona', { r: fmtDist(1000) }), lat: S.geo.lat, lon: S.geo.lon },
+    { t: now - 119 * 60000, type: 'zone_set', text: tf('Dodano strefę „{n}”.', { n: t('Obóz') }) + ' 2 km', lat: lat0 + 0.016, lon: lon0 + 0.02 },
     { t: now - 70 * 60000, type: 'late', text: tf('Brak meldunku od {n} min', { n: 6 }) },
     { t: now - 64 * 60000, type: 'back', text: t('Kontakt z psem wrócił') },
   ];
+  // historia tras tylko w pamięci: dziś (meldunki powyżej) i wczoraj (pętla)
+  const y = now - 864e5;
+  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t) })).concat(Array.from({ length: 90 }, (_, i) => {
+    const a = (i / 90) * 2 * Math.PI, tt = y - (90 - i) * 60000;
+    return { t: tt, day: dayKey(tt), lat: lat0 + 0.004 * Math.sin(a), lon: lon0 + 0.006 * (1 - Math.cos(a)), mv: 4100 - i * 2, pct: 90 - Math.floor(i / 9), sats: 8, int: 60, search: false };
+  }));
   status(t('Pokaz (dane przykładowe).'));
 }
 
@@ -1020,11 +777,6 @@ function init() {
     sendCommand(b.dataset.cmd, b);
   }));
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
-  document.querySelectorAll('.ev-filter .chip').forEach((b) => b.addEventListener('click', () => {
-    S.evFilter = b.dataset.f;
-    document.querySelectorAll('.ev-filter .chip').forEach((x) => x.classList.toggle('on', x === b));
-    renderEvents();
-  }));
   // mapa
   $('btn-c-dog').addEventListener('click', () => centerOn('dog'));
   $('btn-c-me').addEventListener('click', () => centerOn('me'));
@@ -1033,20 +785,6 @@ function init() {
     S.follow = !S.follow; store.set('follow', S.follow); followUI();
     if (S.follow) centerOn('dog');
   });
-  // strefa
-  if (S.geo) $('geo-r').value = String(S.geo.r);
-  $('geo-me').addEventListener('click', () => (S.me ? setGeo(S.me) : alert(t('Brak pozycji GPS telefonu.'))));
-  $('geo-dog').addEventListener('click', () => { const f = lastFix(); f ? setGeo(f) : alert(t('Brak pozycji psa.')); });
-  $('geo-map').addEventListener('click', () => { if (map) { const c = map.getCenter(); setGeo({ lat: c.lat, lon: c.lng }); } });
-  $('geo-off').addEventListener('click', () => setGeo(null));
-  $('geo-r').addEventListener('change', () => { if (S.geo) setGeo(S.geo); });
-  // trasa
-  $('rp-range').addEventListener('change', () => loadReplay(true));
-  $('rp-slider').addEventListener('input', (e) => { stopPlay(); setIdx(parseInt(e.target.value, 10)); });
-  $('rp-play').addEventListener('click', togglePlay);
-  $('rp-speed').addEventListener('change', () => { if (S.rp.timer) { stopPlay(); togglePlay(); } });
-  $('rp-gpx').addEventListener('click', exportGpx);
-  $('rp-csv').addEventListener('click', exportCsv);
   // ustawienia
   $('sel-tracker').addEventListener('change', (e) => { S.tracker = e.target.value; store.set('tracker', S.tracker); render(); });
   $('inp-name').value = S.dogName;
@@ -1066,7 +804,7 @@ function init() {
   });
   $('btn-clear').addEventListener('click', () => {
     if (!confirm(t('Usunąć zapisane meldunki, ślad i zdarzenia?'))) return;
-    S.reports = []; S.myTrail = []; S.events = [];
+    S.reports = []; S.myTrail = []; A.events = [];
     store.set('reports', []); store.set('mytrail', []); store.set('events', []);
     lastDotsN = -1; renderEvents(); render(); dataInfo();
   });
@@ -1077,12 +815,14 @@ function init() {
   });
   window.addEventListener('resize', () => { if (S.tab === 'radar') drawRadar(); });
   initMap();
+  initAnaliza();
+  // meldunki zapisane przed wersją z historią (i przy każdym starcie, na wszelki wypadek) – put nie dubluje
+  histAdd(S.reports);
   followUI();
   startSensors();
   const startTab = ['map', 'replay', 'radar', 'events', 'settings'].includes(S.tab) ? S.tab : 'map';
   S.tab = '';
   showTab(startTab);
-  renderEvents();
   setInterval(() => { if (S.tab !== 'replay') render(); checkLate(); }, 5000);
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
@@ -1097,4 +837,5 @@ function init() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 }
 
-init();
+// analiza.js ładuje się po app.js – start, gdy oba są gotowe
+document.addEventListener('DOMContentLoaded', init);
