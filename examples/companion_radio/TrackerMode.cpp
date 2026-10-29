@@ -26,6 +26,10 @@ extern MyMesh the_mesh;
 #define TRK_SOS_TAPS 3                      // short presses in a row = SOS
 #define TRK_SOS_GAP_MS 800UL                // max. pause between those presses
 #define TRK_SOS_INTERVAL 30                 // report interval during SOS (s)
+#define TRK_LOW_PCT 20                      // battery warning for the wearer: 2 beeps (once)
+#define TRK_CRIT_PCT 10                     // critical: 3 beeps (once) and reports at most every TRK_CRIT_INTERVAL
+#define TRK_CRIT_INTERVAL 600               // except during SOS / search
+#define TRK_BATT_RESET_PCT 30               // warnings re-armed after charging
 #define TRK_GPS_FIRST_MS       180000UL     // first fix after boot (cold start)
 #define TRK_GPS_MAX_MS         60000UL      // later fixes (hot start from RTC backup)
 #define TRK_FIX_SETTLE_MS      3000UL       // keep a fresh fix running this long before using it
@@ -247,6 +251,20 @@ bool TrackerMode::handleButton() {
   return false;
 }
 
+// low battery: the wearer hears it too (base and app see the percentage in every report)
+void TrackerMode::checkBattery() {
+  int pct = trkBattPct(board.getBattMilliVolts());
+  uint8_t lvl = pct <= TRK_CRIT_PCT ? 2 : (pct <= TRK_LOW_PCT ? 1 : 0);
+  if (lvl > _batt_warned) {
+    _batt_warned = lvl;
+    blink(lvl + 1);
+    buzz(lvl + 1, 120);
+  } else if (pct >= TRK_BATT_RESET_PCT) {
+    _batt_warned = 0;   // charged again
+  }
+  if (_batt_warned == 2 && !_search && _interval_s < TRK_CRIT_INTERVAL) _interval_s = TRK_CRIT_INTERVAL;
+}
+
 // buzzer (T1000-E): base command z=N and the answer to an SOS; not while waiting for an ACK
 void TrackerMode::buzz(int n, int ms) {
 #ifdef PIN_BUZZER
@@ -302,6 +320,7 @@ void TrackerMode::composeReport() {
   if (_search) *dp++ = 's';
   if (_sos) *dp++ = 'S';
   if (_ok_pending) { *dp++ = 'O'; _ok_pending = false; }
+  if (_batt_warned == 2) *dp++ = 'w';   // critical battery: saving mode
   if (_misses) *dp++ = 'l';
   if (_home_check || targetIsField()) *dp++ = 'f';
   sprintf(dp, ",%lu", (unsigned long)_seq);
@@ -317,6 +336,7 @@ void TrackerMode::newMessage() {
 void TrackerMode::finishCycle() {
   _fallback = _home_check = false;
   if (_buzz_pending) { buzz(_buzz_pending, 350); _buzz_pending = 0; }
+  checkBattery();
   if (_interval_s > TRK_KEEP_GPS_INTERVAL) gpsPower(false);
   if (_config_requested) {
     _config_requested = false;
@@ -339,7 +359,10 @@ bool TrackerMode::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
     if (p[1] != '=') continue;
     long v = atol(p + 2);
     switch (p[0]) {
-      case 'i': _interval_s = constrain((uint32_t)v, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL); break;
+      case 'i':
+        _interval_s = constrain((uint32_t)v, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
+        if (_batt_warned == 2 && !_search && _interval_s < TRK_CRIT_INTERVAL) _interval_s = TRK_CRIT_INTERVAL;   // saving
+        break;
       case 's':
         _search = v != 0;
         if (!v && _sos) { _sos = false; _buzz_pending = 2; }   // SOS answered: two beeps for the person

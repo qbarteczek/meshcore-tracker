@@ -84,6 +84,11 @@ w Home Assistant). Wtedy tracker **piszczy 2×** – osoba w terenie wie, że we
 `🆘 SOS ·` na początku meldunku, aplikacja włącza alarm z dźwiękiem, a w domu most włącza alarm w Home Assistant
 i alarm na cały ekran na kiosku.
 
+**Słaba bateria** – tracker ostrzega też osobę, która go nosi: przy 20% dwa krótkie sygnały (raz), przy 10% trzy
+sygnały i **oszczędzanie** (meldunek najwyżej co 10 min, flaga `w`, baza dopisuje „oszczędzanie baterii”), chyba że
+trwa SOS albo szukanie. Ostrzeżenia wracają po naładowaniu do 30%. Baza i aplikacja widzą procent w każdym meldunku
+(aplikacja: zdarzenie przy 20%), a w domu most pokazuje słabą baterię na kiosku.
+
 W drugą stronę: polecenie **`#DZWON`** (w aplikacji „Brzęczyk”) – tracker piszczy 3× przy najbliższym meldunku
 (wezwanie do powrotu albo szukanie trackera po dźwięku). Tracker słucha tylko kilka sekund po meldunku, więc
 sygnał przychodzi z opóźnieniem do jednego odstępu meldunków.

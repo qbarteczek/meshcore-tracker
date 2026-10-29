@@ -206,7 +206,7 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   }
 
   // command for the tracker: held from the app, or the hike interval
-  if (!t.cmd[0] && _cfg.field_int && !strchr(flags, 's') && t.interval_s != _cfg.field_int) {
+  if (!t.cmd[0] && _cfg.field_int && !strchr(flags, 's') && !strchr(flags, 'w') && t.interval_s != _cfg.field_int) {   // w: tracker saves battery
     sprintf(t.cmd, "#C i=%lu", (unsigned long)_cfg.field_int);
     t.cmd_user = false;
     t.cmd_ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
@@ -245,6 +245,7 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   dp += sprintf(dp, " \xC2\xB7 co %lu s", (unsigned long)t.interval_s);
   if (strchr(flags, 's') && !strchr(flags, 'S')) dp += sprintf(dp, " \xC2\xB7 SZUKANIE");   // SOS implies search
   if (strchr(flags, 'l')) dp += sprintf(dp, " \xC2\xB7 po przerwie");
+  if (strchr(flags, 'w')) dp += sprintf(dp, " \xC2\xB7 oszcz\xC4\x99" "dzanie baterii");   // "oszczędzanie baterii"
   if (t.fix) {
     if (!fix) dp += sprintf(dp, "\nostatnio: ");
     else *dp++ = '\n';

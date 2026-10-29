@@ -75,6 +75,7 @@ private:
   bool _sos = false;               // SOS: 3 short presses; ends with #STOP (s=0) from the base
   bool _ok_pending = false;        // 2 short presses: "OK" flag in the next report
   uint8_t _buzz_pending = 0;       // beeps to play after the cycle (z=N, SOS answered)
+  uint8_t _batt_warned = 0;        // 0 ok, 1 low (warned), 2 critical (warned, saving)
   uint8_t _taps = 0;
   unsigned long _last_tap = 0;
   uint8_t _attempt = 0;
@@ -117,5 +118,6 @@ private:
   void gpsPower(bool on);
   void blink(int n);
   void buzz(int n, int ms);
+  void checkBattery();
   void runMesh();
 };
