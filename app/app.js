@@ -7,7 +7,7 @@
 // Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-12-beta';
+const VERSION = 'trk2-app-13';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia

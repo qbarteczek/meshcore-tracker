@@ -2,8 +2,9 @@
 
 Strona-aplikacja dla bazy polowej (firmware `Xiao_nrf52_tracker_base`): **Chrome na Androidzie**, połączenie
 z bazą przez Web Bluetooth, **działa bez internetu** po pierwszym otwarciu. Opublikowana pod
-<https://qbart.waw.pl/tracker/> – wersja stabilna (tag `app-stable`), a bieżąca z `main` jako beta pod
-<https://qbart.waw.pl/tracker/beta/> (pokaz bez urządzeń: `#demo`). Awans bety: `git tag -f app-stable main`.
+<https://qbart.waw.pl/tracker/> (pokaz bez urządzeń: `#demo`). Strona publikuje wersję z tagu `app-stable`
+(od 2026-10-29 = wersja 13 z widokami jak w Traccarze); nowa wersja: `git tag -f app-stable main`, wypchnij tag
+na Giteę i uruchom `qbart-www/deploy.sh`. Wersji beta nie ma (usunięta 2026-10-29).
 
 Układ jak w Traccarze (dolne zakładki), wszystko w telefonie, bez serwera:
 

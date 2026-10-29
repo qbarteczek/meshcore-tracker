@@ -138,7 +138,7 @@ TRK1 (pies) ── LoRa, zero-hop ──► BAZA2 (kieszeń/plecak) ── Bluet
 ```
 
 Na Androidzie zamiast aplikacji MeshCore można użyć **[aplikacji „Tracker psa”](app/)** w Chrome
-(<https://qbart.waw.pl/tracker/>, nowości najpierw w becie: <https://qbart.waw.pl/tracker/beta/>). Układ jest
+(<https://qbart.waw.pl/tracker/>). Układ jest
 wzorowany na Traccarze, ale działa bez serwera i bez internetu: mapa OpenStreetMap z psem, jego śladem i kartą stanu
 (bateria, prędkość, GPS, czas meldunku), historia tras po dniach z odtwarzaniem, wykresem baterii i prędkości,
 raportem (dystans, czas w ruchu, prędkości, przejścia i postoje) i zapisem GPX/KML/CSV, strefy z alarmem (jak
