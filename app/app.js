@@ -7,7 +7,7 @@
 // Wszystko działa bez internetu; z sieci pobierane są tylko kafelki mapy OSM (i zostają w telefonie, sw.js).
 'use strict';
 
-const VERSION = 'trk2-app-14';
+const VERSION = 'trk2-app-15';
 const UART = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const UART_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';   // zapis do urządzenia
 const UART_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';   // powiadomienia z urządzenia
@@ -789,49 +789,61 @@ async function toggleWake() {
   $('btn-wake').textContent = S.wake ? t('Ekran: zawsze włączony') : t('Ekran: zwykły');
 }
 
-// pokaz bez urządzeń: index.html#demo (nic nie zapisuje) – spacer 2 h z postojem i strefą
+// pokaz bez urządzeń: index.html#demo (nic nie zapisuje) – spacer 2 h w lasach otwockich (parking leśny między Otwockiem
+// a Karczewem, pętla 6 km po duktach i ścieżkach z OpenStreetMap, postój przy schronach na Dąbrowieckiej Górze).
+// Punkty: przesunięcia od lat0/lon0 w 1e-5° (pary lat,lon); trasy policzone po grafie dróg OSM, żaden odcinek nie wchodzi do wody.
+const DEMO = {
+  dog: [-1,3,-24,157,60,207,155,256,248,298,325,354,301,500,274,659,244,806,220,961,195,1116,167,1269,142,1421,118,1570,90,1726,60,1875,34,2029,9,2183,-18,2333,-39,2486,-83,2595,-180,2556,-268,2513,-365,2459,-442,2471,-484,2610,-481,2600,-481,2614,-483,2620,-489,2613,-487,2616,-490,2612,-487,2610,-560,2647,-641,2575,-733,2572,-812,2529,-784,2388,-756,2237,-732,2098,-706,1950,-679,1809,-656,1659,-707,1527,-758,1407,-806,1265,-853,1141,-895,1010,-902,889,-881,747,-855,601,-829,454,-807,306,-781,164,-726,38,-665,-65,-584,-86,-494,-40,-406,6,-317,45],
+  trail: [-23,159,104,233,243,294,315,425,277,648,236,879,198,1101,157,1331,118,1558,76,1787,39,2013,-1,2241,-37,2465,-116,2582,-256,2522,-395,2447,-474,2579,-476,2583,-474,2583,-474,2583,-474,2583,-473,2585,-535,2655,-669,2573,-807,2554,-775,2339,-736,2119,-697,1897,-659,1680,-728,1484,-802,1283,-867,1081,-907,898,-868,681,-831,457,-795,235,-728,36,-626,-99,-490,-40,-353,21],
+  ania: [1005,652,934,728,858,802,795,894,719,862,633,846,602,956,577,1092,554,1231,527,1366,509,1505,483,1639],
+  yest: [-4,8,-6,66,-18,122,-36,172,-71,151,-110,130,-146,116,-185,99,-223,79,-259,68,-298,47,-332,39,-375,18,-364,-39,-353,-96,-343,-162,-331,-228,-324,-282,-309,-339,-303,-409,-291,-464,-283,-526,-269,-579,-264,-650,-249,-702,-240,-762,-230,-831,-222,-895,-210,-949,-189,-1001,-162,-1044,-135,-1089,-108,-1137,-83,-1180,-54,-1226,-27,-1269,-47,-1236,-77,-1192,-100,-1146,-129,-1104,-168,-1119,-204,-1142,-240,-1153,-283,-1169,-313,-1188,-355,-1205,-389,-1225,-426,-1240,-462,-1251,-500,-1271,-500,-1266,-467,-1252,-426,-1242,-388,-1224,-352,-1202,-312,-1186,-280,-1163,-238,-1150,-204,-1137,-168,-1118,-130,-1109,-90,-1094,-57,-1068,-21,-1049,-31,-990,-40,-930,-52,-872,-64,-808,-74,-749,-79,-688,-90,-625,-128,-621,-163,-616,-202,-600,-219,-549,-192,-514,-157,-507,-123,-482,-84,-474,-47,-454,-7,-436,31,-419,70,-399,67,-361,53,-301,44,-237,29,-176,21,-121,10,-57,-3,3],
+  me: [-353,24], park: [-3,44], gora: [-485,2590],
+};
 function demo() {
   store.set = () => {};
-  const now = Date.now(), lat0 = 52.2297, lon0 = 21.0122, n = 60;
-  S.me = { lat: lat0 + 0.004, lon: lon0 + 0.006, acc: 8, t: now };
-  S.heading = 30;
+  const now = Date.now(), lat0 = 52.0756, lon0 = 21.3009, n = 60;
+  const pts = (a) => Array.from({ length: a.length / 2 }, (_, i) => [lat0 + a[2 * i] * 1e-5, lon0 + a[2 * i + 1] * 1e-5]);
+  const dog = pts(DEMO.dog), trail = pts(DEMO.trail), ania = pts(DEMO.ania), yest = pts(DEMO.yest);
+  const [me] = pts(DEMO.me), [park] = pts(DEMO.park), [gora] = pts(DEMO.gora);
+  S.me = { lat: me[0], lon: me[1], acc: 8, t: now };
+  S.heading = 300;
   S.tracker = 'demo1';
   S.names = { demo1: 'Burek', demo2: 'Ania' };
   S.kinds = { demo1: 'dog', demo2: 'person' };
   S.reports = [];
-  for (let i = 0; i < n; i++) {
-    const k = i < 25 ? i : i < 33 ? 25 + (i - 25) * 0.03 : i - 7;   // postój w środku spaceru
-    const lat = lat0 + 0.00055 * k + 0.0004 * Math.sin(k / 3), lon = lon0 + 0.0007 * k + 0.0003 * Math.cos(k / 4);
+  for (let i = 0; i < n; i++) {   // meldunek co 2 min, postój (meldunki 25–32) przy schronach
+    const [lat, lon] = dog[i];
     const r = { t: now - (n - i) * 120000, lat, lon, fix: true, mv: 4080 - i * 4, pct: 88 - Math.round(i / 3), temp: 14, sats: 9,
       int: 120, search: false, dev: 'demo1' };
-    r.text = fmtDist(distM(lat0, lon0, lat, lon)) + ' · ' + num(r.mv / 1000, 2) + ' V ' + r.pct + '% · 14°C · 9 sat · co 120 s';
+    r.text = fmtDist(distM(park[0], park[1], lat, lon)) + ' · ' + num(r.mv / 1000, 2) + ' V ' + r.pct + '% · 14°C · 9 sat · co 120 s';
     S.reports.push(r);
   }
-  for (let i = 0; i < 12; i++) {   // drugi pies, kawałek dalej
-    const lat = lat0 + 0.012 + 0.0004 * i, lon = lon0 + 0.03 - 0.0006 * i;
+  ania.forEach(([lat, lon], i) => {   // druga osoba na ścieżce ok. 1 km na północ
     S.reports.push({ t: now - (12 - i) * 60000 - 30000, lat, lon, fix: true, mv: 3950, pct: 64, temp: 15, sats: 7, int: 60, search: false, dev: 'demo2',
       text: '3,95 V 64% · 15°C · 7 sat · co 60 s' });
-  }
+  });
   Object.assign(S.reports[S.reports.length - 1], { sos: true, search: true, int: 30, text: '🆘 SOS · 3,95 V 64% · 15°C · 7 sat · co 30 s' });
   S.reports.sort((a, b) => a.t - b.t);
   prepReports();
-  N.pois = [{ id: 'p1', name: 'Auto', icon: '🚗', lat: lat0 - 0.001, lon: lon0 - 0.002 }];
-  S.myTrail = Array.from({ length: 40 }, (_, i) => [lat0 + 0.0001 * i, lon0 + 0.00015 * i, now - (40 - i) * 180000]);
-  A.zones = [{ id: 'demo', name: t('Obóz'), lat: lat0 + 0.016, lon: lon0 + 0.02, r: 2000, on: true },
-    { id: 'demo2', name: 'Park', on: true, pts: [[lat0 + 0.009, lon0 + 0.026], [lat0 + 0.016, lon0 + 0.026], [lat0 + 0.017, lon0 + 0.034], [lat0 + 0.01, lon0 + 0.036]] }];
+  N.pois = [{ id: 'p1', name: 'Auto', icon: '🚗', lat: park[0], lon: park[1] }];
+  S.myTrail = trail.map(([lat, lon], i) => [lat, lon, now - (40 - i) * 180000]);
+  const a = ania[ania.length - 1];
+  A.zones = [{ id: 'demo', name: t('Obóz'), lat: park[0] - 0.004, lon: park[1] + 0.012, r: 2000, on: true },
+    { id: 'demo2', name: 'Dąbrowiecka Góra', on: true, pts: [[gora[0] - 0.0018, gora[1] - 0.003], [gora[0] + 0.0016, gora[1] - 0.0032],
+      [gora[0] + 0.0019, gora[1] + 0.0028], [gora[0] - 0.0015, gora[1] + 0.003]] }];
   A.inside = { demo: true };
   A.events = [
     { t: now - 125 * 60000, type: 'conn', text: tf('Połączono z bazą {name}.', { name: 'BAZA2' }) },
-    { t: now - 119 * 60000, type: 'zone_set', text: tf('Dodano strefę „{n}”.', { n: t('Obóz') }) + ' 2 km', lat: lat0 + 0.016, lon: lon0 + 0.02 },
-    { t: now - 70 * 60000, type: 'late', text: tf('Brak meldunku od {n} min', { n: 6 }) },
-    { t: now - 64 * 60000, type: 'back', text: t('Kontakt z psem wrócił') },
-    { t: now - 60000, type: 'sos', text: 'Ania: ' + t('SOS z przycisku trackera!'), lat: lat0 + 0.0164, lon: lon0 + 0.0234 },
+    { t: now - 119 * 60000, type: 'zone_set', text: tf('Dodano strefę „{n}”.', { n: t('Obóz') }) + ' 2 km', lat: park[0] - 0.004, lon: park[1] + 0.012 },
+    { t: now - 66 * 60000, type: 'late', text: tf('Brak meldunku od {n} min', { n: 6 }) },
+    { t: now - 60 * 60000, type: 'back', text: t('Kontakt z psem wrócił') },
+    { t: now - 60000, type: 'sos', text: 'Ania: ' + t('SOS z przycisku trackera!'), lat: a[0], lon: a[1] },
   ];
-  // historia tras tylko w pamięci: dziś (meldunki powyżej) i wczoraj (pętla)
+  // historia tras tylko w pamięci: dziś (meldunki powyżej) i wczoraj (pętla nad Jezioro Torfy, meldunek co minutę)
   const y = now - 864e5;
-  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t), tracker: r.dev })).concat(Array.from({ length: 90 }, (_, i) => {
-    const a = (i / 90) * 2 * Math.PI, tt = y - (90 - i) * 60000;
-    return { t: tt, day: dayKey(tt), lat: lat0 + 0.004 * Math.sin(a), lon: lon0 + 0.006 * (1 - Math.cos(a)), mv: 4100 - i * 2, pct: 90 - Math.floor(i / 9), sats: 8, int: 60, search: false };
+  H.mem = S.reports.map((r) => ({ ...r, day: dayKey(r.t), tracker: r.dev })).concat(yest.map(([lat, lon], i) => {
+    const tt = y - (90 - i) * 60000;
+    return { t: tt, day: dayKey(tt), lat, lon, mv: 4100 - i * 2, pct: 90 - Math.floor(i / 9), sats: 8, int: 60, search: false };
   }));
   status(t('Pokaz (dane przykładowe).'));
 }
