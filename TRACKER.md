@@ -88,7 +88,8 @@ i alarm na cały ekran na kiosku.
 przesunięty o godziny). Dlatego baza przy każdym meldunku porównuje czas trackera ze swoim i przy różnicy ponad 2 min
 odsyła mu właściwy (`#C t=`). Baza polowa robi to tylko wtedy, gdy sama dostała czas z telefonu (aplikacja Tracker
 albo MeshCore ustawia go przy połączeniu); w domu czas daje most z serwera (NTP), który pilnuje też zegara swojego
-węzła (przy połączeniu i co godzinę).
+węzła (przy połączeniu i co godzinę). Od trk4 tracker ustawia też zegar z GPS – tylko z fixu po wybudzeniu (do trk3
+odczyt sprzed uśpienia cofał zegar o cały odstęp, a meldunek dostawał czas końca poprzedniego cyklu).
 
 **Słaba bateria** – tracker ostrzega też osobę, która go nosi: przy 20% dwa krótkie sygnały (raz), przy 10% trzy
 sygnały i **oszczędzanie** (meldunek najwyżej co 10 min, flaga `w`, baza dopisuje „oszczędzanie baterii”), chyba że

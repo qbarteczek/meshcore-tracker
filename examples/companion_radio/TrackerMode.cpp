@@ -295,6 +295,10 @@ void TrackerMode::startCycle() {
   _fresh_since = 0;
   _gps_wake = millis();
   gpsPower(true);
+  // drop the NMEA data from before the sleep: its periodic time sync would otherwise set the clock back to the
+  // last fix of the previous cycle; the clock is then set from the first fresh fix
+  LocationProvider* lp = sensors.getLocationProvider();
+  if (lp) lp->syncTime();
   _deadline = millis() + (_gps_ever_fixed ? TRK_GPS_MAX_MS : TRK_GPS_FIRST_MS);
   _state = ST_GPS;
 }
@@ -328,6 +332,7 @@ void TrackerMode::composeReport() {
 
 void TrackerMode::newMessage() {
   _attempt = 0;
+  rtc_clock.tick();   // sleep and GPS do not tick the clock: without this the report is stamped with the end of the last cycle
   _msg_ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
   composeReport();
   _state = ST_SEND;
