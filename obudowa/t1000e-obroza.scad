@@ -36,8 +36,11 @@ mostek_molle  = 2.0;    // grubość mostka pod listwą w bloczku (tyle pasek mu
 pas_grub      = 2.0;    // grubość taśmy paska kamizelki (!) - pasek leży NA listwie
 luz_pasa      = 0.6;    // luz nad paskiem, pod płytą obudowy
 grot_dl       = 14;     // długość zatrzasku (grotu)
-grot_wystep   = 1.4;    // o ile zaczep grotu wystaje na bok poza tunel (musi być > faza_tunelu,
-                        // inaczej zaczep zsuwa się po fazie zamiast oprzeć się o bloczek)
+grot_wystep   = 2.0;    // o ile zaczep grotu wystaje na bok poza tunel; płaskie oparcie o bloczek
+                        // = grot_wystep - faza_tunelu - r_zaczepu (tu 0,8 mm), inaczej zaczep
+                        // zsuwa się po fazie zamiast oprzeć się o bloczek
+zaczep_prosty = 1.2;    // prosty odcinek zaczepu przed skosem grotu (narożnik 90° zamiast ostrego)
+r_zaczepu     = 0.4;    // zaokrąglenie zaczepów; duże (jak reszta listwy) zjada płaską półkę
 szczelina_grotu = 6.0;  // szczelina między ramionami grotu (ramiona 6 mm szerokie)
 szczelina_przed = 40;   // długość sprężystych ramion przed zaczepem; krótsze = sztywniej i pęka
                         // (symulacja_zatrzasku.py: 40 mm daje 1,2% odkształcenia - PETG z zapasem)
@@ -221,7 +224,11 @@ module ramka() {
         translate([0, 0, -1]) wkrety(wkret_otw_ram, ramka_gr + 2);
     }
 }
-module listwa()   { zaokraglij(r_kraw_listwy) linear_extrude(listwa_gr) listwa_2d(); }
+module listwa() {
+    zaokraglij(r_kraw_listwy) linear_extrude(listwa_gr) listwa_2d();
+    // zaczepy osobno, z małym zaokrągleniem - półka oporowa zostaje płaska
+    zaokraglij(r_zaczepu) linear_extrude(listwa_gr) zaczepy_2d();
+}
 
 // pełna bryła z tunelami i oknem - ta jest zaokrąglana
 module podstawa_bryla() {
@@ -268,23 +275,32 @@ module listwa_2d() {
     // naroża w płaszczyźnie listwy zaokrąglone mocniej (r = 1,5 mm)
     offset(r = 1.5) offset(delta = -1.5) listwa_2d_ostra();
 }
+listwa_dl = molle_sz + 0.4;                     // od główki do zaczepów
 module listwa_2d_ostra() {
     w   = listwa_szer;
-    dl  = molle_sz + 0.4;                       // od główki do zaczepów
-    gw  = tunel_m_sz + 2*grot_wystep;           // szerokość grotu na zaczepach
+    dl  = listwa_dl;
     // główka
     translate([-(w + 6)/2, -glowka_dl]) square([w + 6, glowka_dl]);
     difference() {
         union() {
             translate([-w/2, -0.01]) square([w, dl + 0.02]);
-            // grot: od zaczepów (szeroki) zwęża się do czubka
+            // czubek grotu zwęża się (zaczepy dokłada zaczepy_2d)
             translate([0, dl])
-                polygon([[-gw/2, 0], [gw/2, 0], [w/2 - 1.5, grot_dl], [-(w/2 - 1.5), grot_dl]]);
+                polygon([[-w/2, 0], [w/2, 0], [w/2 - 1.5, grot_dl], [-(w/2 - 1.5), grot_dl]]);
         }
         // szczelina dzieląca grot na dwa sprężyste ramiona
         translate([-szczelina_grotu/2, dl - szczelina_przed]) square([szczelina_grotu, grot_dl + szczelina_przed + 1]);
         translate([0, dl - szczelina_przed]) circle(d = szczelina_grotu);
     }
+}
+// Zaczepy grotu (oba boki): płaska półka oporowa, prosty odcinek i skos wprowadzający
+// do czubka. Zachodzą 1,5 mm na ramię, żeby zrosły się z nim po zaokrągleniu.
+module zaczepy_2d() {
+    w  = listwa_szer;
+    gw = tunel_m_sz + 2*grot_wystep;
+    for (k = [-1, 1]) scale([k, 1])
+        translate([0, listwa_dl])
+            polygon([[w/2 - 1.5, 0], [gw/2, 0], [gw/2, zaczep_prosty], [w/2 - 1.5, grot_dl]]);
 }
 
 

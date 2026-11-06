@@ -10,12 +10,13 @@ dla GPS. Plik źródłowy: [t1000e-obroza.scad](t1000e-obroza.scad), gotowe plik
   M2 × 8 do plastiku
 - **listwy** (2 sztuki + 1 zapasowa): idą w poprzek psa przez bloczek, pod paskiem kamizelki,
   przez bloczek, pod paskiem i przez bloczek. Na końcu zatrzaskują się rozdwojonym grotem
-  (ramiona 40 mm, zaczep 1,4 mm opiera się płasko o bloczek, poza fazą tunelu).
-  Żeby zdjąć, ściśnij grot palcami (ok. 4,5 N na ramię w PETG) i wysuń listwę za główkę.
+  (ramiona 40 mm, zaczep wystaje 2 mm poza tunel i opiera się płasko o bloczek ok. 1 mm poza fazą tunelu).
+  Żeby zdjąć, ściśnij grot palcami (ok. 6,5 N na ramię w PETG) i wysuń listwę za główkę.
 
 Wszystkie wypukłe krawędzie są zaokrąglone, żeby nic nie drapało psa i nie przecierało kamizelki:
 podstawa r 1,4 mm (tunele na listwy są wycinane po zaokrągleniu, więc mostki pod listwami, 2 mm, zostają pełne), ramka r 0,9 mm, listwy r 1,0 mm,
-a naroża listew w płaszczyźnie 1,5 mm. Robi to moduł `zaokraglij()`. Kieszeń i otwory na wkręty są
+a naroża listew w płaszczyźnie 1,5 mm. Wyjątek: zaczepy grotu mają tylko r 0,4 mm, bo większe zaokrąglenie
+zjada płaską półkę zaczepu i listwa zsuwa się po fazie tunelu (tak było do 2026-11-06). Robi to moduł `zaokraglij()`. Kieszeń i otwory na wkręty są
 wycinane po zaokrągleniu, bo po złożeniu są zakryte. Zbliżenia: [podglad/krawedzie.png](podglad/krawedzie.png).
 
 Wymiary: 91,6 mm wzdłuż grzbietu × 79 mm w poprzek (korpus 61,6 mm, płyta z bloczkami 79 mm),
@@ -52,7 +53,7 @@ więc okno ma 26 mm długości i obejmuje oba. Najpierw wydrukuj samą ramkę i 
 |---|---|---|
 | podstawa | na stojąco, na krótszym końcu (bez podpór), z brimem | PETG lub ASA |
 | ramka | płasko, frontem do stołu | PETG / ASA |
-| listwy | płasko | **PETG** albo nylon (PA). PLA jest na granicy (pęka po wielu zdjęciach do ładowania) |
+| listwy | płasko | **PETG** albo nylon (PA). Nie PLA (1,8% odkształcenia przy dopuszczalnych 1,2% - pęka po wielu zdjęciach) |
 
 Żywica (Photon): użyj żywicy wytrzymałej (tough/ABS-like), a listwy i tak wydrukuj na FDM.
 
@@ -61,7 +62,12 @@ więc okno ma 26 mm długości i obejmuje oba. Najpierw wydrukuj samą ramkę i 
 - `python3 symulacja_zatrzasku.py` – wytrzymałość grotu listwy dla PLA i PETG: odkształcenie u nasady
   ramienia (z karbem), siła ściśnięcia palcami, wkładania i czy zaczep trzyma. Pierwsza wersja
   (ramiona 12 mm, szczelina 2,6 mm) dawała 12,9% odkształcenia – pękłaby przy pierwszym wkładaniu;
-  obecna: 1,2% (PETG z zapasem, PLA na granicy).
+  druga (v2): 1,2%, ale jej zaczep po zaokrągleniu nie miał płaskiej półki (pomiar STL: 0 mm poza fazą)
+  i wysuwał się przy ok. 17 N. Obecna (v3, zaczepy r 0,4, wysięg 2 mm): 1,8%, oparcie ok. 1 mm,
+  trzyma płasko (PETG z zapasem, PLA za słaby).
+- MES z G-code (`symulacja-wydrukow`, przypadek `przyklady/listwa-molle/listwa_v3_petg.py`, ugięcie 2 mm
+  na ramię, dysza 0,4, warstwa 0,2, 3 obrysy): PETG SF 2,5 (OK przy wielu cyklach), PLA SF 1,8 (za mało).
+  Najbardziej wytężona jest nasada ramion przy końcu szczeliny, nie zaczep.
 - `fem_listwa.py` – MES (Gmsh + scikit-fem, środowisko `~/.local/opt/fem-venv`), mapa odkształceń
   w [podglad/fem-grot.png](podglad/fem-grot.png). Nasada ramion: wersja pierwsza 4,5%, obecna 0,78%
   (PLA i PETG mieszczą się w dopuszczalnym odkształceniu); siła ściśnięcia 5,4 N (PETG) / 9 N (PLA) na ramię.

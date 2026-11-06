@@ -20,7 +20,7 @@ MATERIALY = {
 
 
 def zatrzask(listwa_szer, listwa_gr, luz_listwy, grot_wystep, szczelina, przed_zaczepem,
-             grot_dl, faza_tunelu, r_kraw_listwy=1.0):
+             grot_dl, faza_tunelu, r_kraw_listwy=1.0, r_zaczepu=None):
     w, t = listwa_szer, listwa_gr
     h = (w - szczelina) / 2 - 0.3 * r_kraw_listwy      # zaokrąglenie krawędzi zjada trochę przekroju
     L = przed_zaczepem
@@ -28,7 +28,10 @@ def zatrzask(listwa_szer, listwa_gr, luz_listwy, grot_wystep, szczelina, przed_z
     tunel = w + luz_listwy
     gw = tunel + 2 * grot_wystep
     tg_klin = (gw / 2 - (w / 2 - 1.5)) / grot_dl        # pochylenie grotu (wprowadzenie)
-    oparcie = grot_wystep - faza_tunelu                 # zaczep poza fazą = płaskie oparcie o bloczek
+    # zaczep poza fazą = płaskie oparcie o bloczek; zaokrąglenie narożnika zaczepu też je zjada
+    # (v1/v2: ostry narożnik ok. 77° pod r 1,5 w płaszczyźnie - zjadał całą półkę, pomiar STL: 0 mm)
+    r_z = r_zaczepu if r_zaczepu is not None else 1.9
+    oparcie = grot_wystep - faza_tunelu - r_z
     kt = 1 + 0.5 * math.sqrt(h / (szczelina / 2))       # karb na końcu szczeliny (przybliżenie)
     return dict(h=h, L=L, d=d, t=t, gw=gw, tg_klin=tg_klin, oparcie=oparcie, kt=kt,
                 kolizja=d > szczelina / 2 - 0.2)
@@ -72,6 +75,8 @@ WARIANTY = {
                         przed_zaczepem=12, grot_dl=14, faza_tunelu=0.8),
     'poprawiony (v2)': dict(listwa_szer=18, listwa_gr=2.4, luz_listwy=0.8, grot_wystep=1.4, szczelina=6.0,
                             przed_zaczepem=40, grot_dl=14, faza_tunelu=0.8),
+    'v3 (zaczepy r 0,4)': dict(listwa_szer=18, listwa_gr=2.4, luz_listwy=0.8, grot_wystep=2.0, szczelina=6.0,
+                               przed_zaczepem=40, grot_dl=14, faza_tunelu=0.8, r_zaczepu=0.4),
 }
 
 if __name__ == '__main__':
