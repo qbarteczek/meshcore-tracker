@@ -10,10 +10,11 @@
 //
 // Obroża: dwa tunele z tyłu, obroża przechodzi pod trackerem.
 //
-// Ładowanie: okno z tyłu odsłania magnetyczne styki; zdejmij obudowę i przyłóż kabel.
+// Ładowanie: podłużne okno z tyłu odsłania magnetyczne styki; zdejmij obudowę i przyłóż kabel.
 //
-// Wymiary T1000-E wg producenta: 85 x 55 x 6.5 mm. Położenie przycisku, diody,
-// brzęczyka i styków oszacowane ze zdjęć; paski kamizelki - wartości typowe.
+// Wymiary T1000-E wg producenta: 85 x 55 x 6.5 mm. Położenie przycisku, diody
+// i brzęczyka oszacowane ze zdjęć (styki ładowania - wg gotowych akcesoriów);
+// paski kamizelki - wartości typowe.
 // ZMIERZ i popraw sekcje oznaczone (!) przed drukiem.
 //
 // Render:  openscad -D 'czesc="podstawa"' -o podstawa.stl t1000e-obroza.scad
@@ -89,12 +90,18 @@ otwory_front = [
     [36.7, 27.5,  9],   // dioda + czujnik światła/temperatury
     [52.8, 27.5, 16],   // brzęczyk
 ];
-// ---------- Okno z tyłu na styki ładowania (!) ----------
-okno_tyl_x  = 42.5;   // środek okna, od końca z oczkiem (między listwami MOLLE)
-okno_tyl_y  = 27.5;
-okno_tyl_dl = 16;     // wzdłuż X (nie może wchodzić w tunele listew)
-okno_tyl_sz = 16;     // wzdłuż Y
-okno_tyl_r  = 4;
+// ---------- Okno z tyłu na wtyczkę ładowania ----------
+// Wtyczka magnetyczna (4 piny co 2,5 mm) leży płasko wzdłuż karty, kabel wychodzi
+// w stronę końca BEZ oczka. Położenie wg trzech gotowych akcesoriów (etui ochronne
+// z oknem 9 x 28 mm, stojak i dok z gniazdem ok. 7 x 27 mm): środek styków ok. 14 mm
+// od osi karty w bok i 5 mm od środka w stronę oczka. Patrząc na FRONT, oczkiem
+// do góry, okno jest po prawej (y > 27.5); patrząc na tył - po lewej.
+// MOLLE: okno wypada na płycie między bloczkami (pod paskiem), poza tunelami listew.
+okno_tyl_x  = 37.5;   // środek okna, od końca z oczkiem
+okno_tyl_y  = 41.75;  // środek okna w poprzek (13,25 mm od krawędzi y = 55)
+okno_tyl_dl = 29;     // wzdłuż X (wtyczka ok. 27 mm + luz)
+okno_tyl_sz = 9.5;    // wzdłuż Y (wtyczka ok. 7 mm + luz)
+okno_tyl_r  = 3;
 
 $fn = 48;
 

@@ -23,7 +23,11 @@ grubość ok. 17,5 mm (nad listwą jest miejsce na pasek kamizelki).
 Schemat montażu krok po kroku: [montaz-molle.html](montaz-molle.html).
 
 Ładowanie: wysuń listwy, zdejmij obudowę i przyłóż kabel magnetyczny do okna z tyłu.
-Nie trzeba jej rozkręcać.
+Nie trzeba jej rozkręcać. Okno ma 9,5 × 29 mm i leży wzdłuż trackera, przesunięte w bok od osi
+(od tyłu, oczkiem do góry: po lewej), bo tam są 4 styki magnetyczne. Wtyczka leży w nim płasko,
+a kabel wychodzi w stronę końca bez oczka. Położenie przyjęto z trzech gotowych akcesoriów do T1000-E
+(etui ochronne z oknem 9 × 28 mm, stojak i dok z gniazdem ok. 7 × 27 mm), wszystkie zgodne co do 1 mm.
+Okno wypada na płycie między bloczkami, więc nie przecina tuneli listew.
 
 Wariant na obrożę: `-D 'mocowanie="obroza"'` (plik [stl/podstawa-obroza.stl](stl/podstawa-obroza.stl), obroża do 25 × 3,5 mm).
 
@@ -38,8 +42,9 @@ Na kamizelce (suwmiarką):
 | `petla_rozstaw` | odstęp między szwami (przeszyciami) na pasku, czyli długość pętli | 38,1 |
 | `pas_ile` | pod iloma paskami ma iść listwa (bloczków jest o 1 więcej) | 2 |
 
-Na trackerze: położenie przycisku, diody, brzęczyka i styków ładowania jest oszacowane ze zdjęć
-producenta. Popraw `otwory_front` i `okno_tyl_*`. Najpierw wydrukuj samą ramkę na próbę.
+Na trackerze: położenie przycisku, diody i brzęczyka jest oszacowane ze zdjęć producenta.
+Popraw `otwory_front`. Najpierw wydrukuj samą ramkę na próbę. Okno ładowania (`okno_tyl_*`) jest już
+ustawione według gotowych akcesoriów (patrz wyżej).
 
 ## Druk
 
