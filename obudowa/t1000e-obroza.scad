@@ -31,13 +31,16 @@ petla_rozstaw = 38.1;   // rozstaw szwów na pasku = rozstaw dwóch listew (MOLL
 // listwa
 listwa_szer   = 18;     // musi wejść między szwy paska (< petla_rozstaw - szew)
 listwa_gr     = 2.4;
-luz_listwy    = 0.6;    // luz tunelu na grubość (szerokość: połowa tego na stronę)
+luz_listwy    = 0.8;    // luz tunelu na grubość (szerokość: połowa tego na stronę); FDM: zwis stropu tunelu
 mostek_molle  = 2.0;    // grubość mostka pod listwą w bloczku (tyle pasek musi się unieść + listwa)
 pas_grub      = 2.0;    // grubość taśmy paska kamizelki (!) - pasek leży NA listwie
 luz_pasa      = 0.6;    // luz nad paskiem, pod płytą obudowy
 grot_dl       = 14;     // długość zatrzasku (grotu)
-grot_wystep   = 1.0;    // o ile zaczep grotu wystaje na bok poza tunel
-szczelina_grotu = 2.6;  // szczelina między ramionami grotu
+grot_wystep   = 1.4;    // o ile zaczep grotu wystaje na bok poza tunel (musi być > faza_tunelu,
+                        // inaczej zaczep zsuwa się po fazie zamiast oprzeć się o bloczek)
+szczelina_grotu = 6.0;  // szczelina między ramionami grotu (ramiona 6 mm szerokie)
+szczelina_przed = 40;   // długość sprężystych ramion przed zaczepem; krótsze = sztywniej i pęka
+                        // (symulacja_zatrzasku.py: 40 mm daje 1,2% odkształcenia - PETG z zapasem)
 glowka_dl     = 6;      // główka listwy (oporek po drugiej stronie)
 
 // ---------- Obroża ----------
@@ -82,19 +85,23 @@ napis       = "";
 napis_wys   = 4.5;
 napis_gleb  = 0.6;
 
-// ---------- Elementy na froncie (!) (współrzędne na karcie) ----------
-// x = od końca z oczkiem smyczy wzdłuż 85 mm, y = od lewej krawędzi (55 mm), średnica otworu
+// ---------- Elementy na froncie (współrzędne na karcie) ----------
+// x = od końca z oczkiem smyczy wzdłuż 85 mm, y = w poprzek (55 mm), średnica otworu.
+// Wg rysunku wymiarowego Seeed (karta katalogowa T1000-E) i zdjęć urządzenia (2026-10-28).
 otwory_front = [
-    [18.0, 27.5, 13],   // przycisk
-    [36.7, 27.5,  9],   // dioda + czujnik światła/temperatury
-    [52.8, 27.5, 16],   // brzęczyk
+    [18.4, 27.5, 16],   // przycisk: nakładka Ø 13,6 mm + zapas, żeby ramka jej nie dociskała
+    [36.9, 27.5,  9],   // świetlik diody i czujnika światła (Ø 6,1 mm)
+    [52.6, 27.5, 10],   // brzęczyk: w obudowie karty jest otworek ok. 1 mm nad piezo Ø ok. 16 mm
 ];
-// ---------- Okno z tyłu na styki ładowania (!) ----------
-okno_tyl_x  = 42.5;   // środek okna, od końca z oczkiem (między listwami MOLLE)
-okno_tyl_y  = 27.5;
-okno_tyl_dl = 16;     // wzdłuż X (nie może wchodzić w tunele listew)
-okno_tyl_sz = 16;     // wzdłuż Y
-okno_tyl_r  = 4;
+// ---------- Okno z tyłu na styki ładowania ----------
+// 4 piny pogo w pionowym rzędzie (kapsuła 17,3 x 5,2 mm z dwoma magnesami), 14 mm od długiego boku.
+// Y: patrząc od frontu, oczko przy X = 0 - piny są przy Y = 55 - 14 (zdjęcie tyłu: oczko na dole, piny po prawej).
+// X: rysunek Seeed daje środek 35,6 mm od oczka, zdjęcie ok. 43 mm - okno obejmuje oba.
+okno_tyl_x  = 43.0;   // środek okna, od końca z oczkiem
+okno_tyl_y  = 41.0;
+okno_tyl_dl = 26;     // wzdłuż X: kapsuła 17,3 mm + rozrzut położenia + wtyczka
+okno_tyl_sz = 10;     // wzdłuż Y: kapsuła 5,2 mm + wtyczka; mieści się w przerwie między bloczkami MOLLE
+okno_tyl_r  = 3;
 
 $fn = 48;
 
@@ -275,8 +282,8 @@ module listwa_2d_ostra() {
                 polygon([[-gw/2, 0], [gw/2, 0], [w/2 - 1.5, grot_dl], [-(w/2 - 1.5), grot_dl]]);
         }
         // szczelina dzieląca grot na dwa sprężyste ramiona
-        translate([-szczelina_grotu/2, dl - 12]) square([szczelina_grotu, grot_dl + 13]);
-        translate([0, dl - 12]) circle(d = szczelina_grotu);
+        translate([-szczelina_grotu/2, dl - szczelina_przed]) square([szczelina_grotu, grot_dl + szczelina_przed + 1]);
+        translate([0, dl - szczelina_przed]) circle(d = szczelina_grotu);
     }
 }
 
