@@ -17,7 +17,9 @@ short direct message to its base, which ACKs it and can answer with a command (i
 Bluetooth window, home/field base). There are two bases: a **home base** (a companion on a home server,
 reached through a repeater) and a **field base** (a companion you carry on a hike, built with
 `TRACKER_BASE`). When the active base does not answer, the tracker tries the other one, zero-hop for the field
-base so the mesh is not flooded. The field base shows the dog on the MeshCore app's map, turns the reports
+base so the mesh is not flooded. Since trk5, while the home base is active, every delivered report is also
+copied once, zero-hop, to the field base when it is in range (flag `c`; the home base keeps setting the interval),
+so the app on a hike sees the dog even when home can hear it too. The field base shows the dog on the MeshCore app's map, turns the reports
 into readable messages (distance, direction, battery), holds commands typed in the app until the tracker's
 next report, and raises an alarm when reports stop. Everything stays inside a normal MeshCore network.
 
@@ -51,7 +53,8 @@ przełącznik „Wędrówka”).
         lat       lon       alt mV   °C   sat int flagi nr
    ```
    Flagi: `b` pierwszy po włączeniu, `m` przesunął się > 100 m od ostatniej dostarczonej pozycji,
-   `n` brak fixu, `s` tryb szukania, `l` poprzednie meldunki nie doszły, `f` tryb wędrówki (baza polowa).
+   `n` brak fixu, `s` tryb szukania, `l` poprzednie meldunki nie doszły, `f` tryb wędrówki (baza polowa),
+   `c` kopia dla bazy polowej, gdy dom odebrał meldunek (od trk5; baza wtedy nie zmienia odstępu).
    Do 3 prób; ostatnia w trybie szukania idzie floodem (do całej sieci). Jeśli nie dojdzie –
    2 próby do drugiej bazy.
 4. **Okno poleceń** – po ACK nasłuch 8 s na odpowiedź bazy:
@@ -145,7 +148,8 @@ Zwykły companion BLE MeshCore – aplikacja, czaty, kanały i mapa działają j
 
 Zmienna własna bazy: `tb_int` – odstęp meldunków na wędrówce w sekundach, `0` = nie zmieniaj.
 
-Uwaga: polecenia z bazy polowej docierają tylko wtedy, gdy tracker do niej melduje (tryb wędrówki).
+Uwaga: polecenia z bazy polowej docierają tylko wtedy, gdy tracker do niej melduje (tryb wędrówki albo,
+od trk5, kopia meldunku). Odstęp (`i=`) z bazy polowej tracker przyjmuje tylko w trybie wędrówki lub z `s=1`.
 Po powrocie do domu wyłącz bazę polową albo wpisz `#DOM` – inaczej tracker dalej melduje do niej.
 
 ## Śledzenie osób (za zgodą)

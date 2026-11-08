@@ -207,7 +207,9 @@ bool TrackerBase::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
   }
 
   // command for the tracker: held from the app, or the hike interval
-  if (!t.cmd[0] && _cfg.field_int && !strchr(flags, 's') && !strchr(flags, 'w') && t.interval_s != _cfg.field_int) {   // w: tracker saves battery
+  // c: a copy while the home base is in charge (it sets the interval); w: tracker saves battery
+  if (!t.cmd[0] && _cfg.field_int && !strchr(flags, 's') && !strchr(flags, 'w') && !strchr(flags, 'c')
+      && t.interval_s != _cfg.field_int) {
     sprintf(t.cmd, "#C i=%lu", (unsigned long)_cfg.field_int);
     t.cmd_user = false;
     t.cmd_ts = the_mesh.getRTCClock()->getCurrentTimeUnique();

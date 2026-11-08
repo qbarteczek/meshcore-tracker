@@ -194,6 +194,11 @@ bool TrackerMode::findBase(ContactInfo& dest, bool field, int* count) {
   return found;
 }
 
+bool TrackerMode::isHomeBase(const ContactInfo& c) {
+  ContactInfo b;
+  return findBase(b, false) && memcmp(b.id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0;
+}
+
 bool TrackerMode::isBase(const ContactInfo& c) {
   if (!c.isFav()) return false;
   ContactInfo b;
@@ -326,7 +331,8 @@ void TrackerMode::composeReport() {
   if (_ok_pending) { *dp++ = 'O'; _ok_pending = false; }
   if (_batt_warned == 2) *dp++ = 'w';   // critical battery: saving mode
   if (_misses) *dp++ = 'l';
-  if (_home_check || targetIsField()) *dp++ = 'f';
+  if (_home_check || (targetIsField() && !_field_copy)) *dp++ = 'f';
+  if (_field_copy) *dp++ = 'c';         // copy for the field base (app on the hike); home stays in charge
   sprintf(dp, ",%lu", (unsigned long)_seq);
 }
 
@@ -339,7 +345,7 @@ void TrackerMode::newMessage() {
 }
 
 void TrackerMode::finishCycle() {
-  _fallback = _home_check = false;
+  _fallback = _home_check = _field_copy = false;
   if (_buzz_pending) { buzz(_buzz_pending, 350); _buzz_pending = 0; }
   checkBattery();
   if (_interval_s > TRK_KEEP_GPS_INTERVAL) gpsPower(false);
@@ -365,6 +371,8 @@ bool TrackerMode::onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t se
     long v = atol(p + 2);
     switch (p[0]) {
       case 'i':
+        // the home base sets the interval; a field base only in field mode or with a search (s=1)
+        if (!_field_mode && !strstr(text, "s=1") && !isHomeBase(from)) break;
         _interval_s = constrain((uint32_t)v, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
         if (_batt_warned == 2 && !_search && _interval_s < TRK_CRIT_INTERVAL) _interval_s = TRK_CRIT_INTERVAL;   // saving
         break;
@@ -439,7 +447,7 @@ bool TrackerMode::loop() {
         radio_driver.wakeRadio();
         _radio_asleep = false;
         _seq++;
-        _fallback = _home_check = false;
+        _fallback = _home_check = _field_copy = false;
         newMessage();
       } else {
         delay(2);
@@ -451,18 +459,19 @@ bool TrackerMode::loop() {
       bool to_field = targetIsField();
       ContactInfo base;
       if (!findBase(base, to_field)) {
-        if (to_field && !_fallback) { setFieldMode(false); newMessage(); }   // field base removed
+        if (_field_copy) finishCycle();
+        else if (to_field && !_fallback) { setFieldMode(false); newMessage(); }   // field base removed
         else finishCycle();
         return true;
       }
       ContactInfo* real = the_mesh.lookupContactByPubKey(base.id.pub_key, PUB_KEY_SIZE);
-      int max_att = _home_check ? 1 : (_fallback ? TRK_FALLBACK_ATTEMPTS : TRK_MAX_ATTEMPTS);
+      int max_att = (_home_check || _field_copy) ? 1 : (_fallback ? TRK_FALLBACK_ATTEMPTS : TRK_MAX_ATTEMPTS);
       if (real) {
-        if (to_field && (real->out_path_len == OUT_PATH_UNKNOWN || _attempt == 1)) {
+        if (to_field && (real->out_path_len == OUT_PATH_UNKNOWN || _attempt == 1 || _field_copy)) {
           real->out_path_len = 0;   // the field base is usually close to the dog: zero-hop, no flooding
         }
-        if (_attempt == max_att - 1 && _search && !_home_check) the_mesh.resetPathTo(*real);  // last try: flood
-        if (_sos && _attempt >= 1) the_mesh.resetPathTo(*real);   // SOS: every retry floods (repeaters, other paths)
+        if (_attempt == max_att - 1 && _search && !_home_check && !_field_copy) the_mesh.resetPathTo(*real);  // last try: flood
+        if (_sos && _attempt >= 1 && !_field_copy) the_mesh.resetPathTo(*real);   // SOS: every retry floods (repeaters, other paths)
         base = *real;
       }
       uint32_t est_timeout = 0;
@@ -480,7 +489,7 @@ bool TrackerMode::loop() {
     case ST_WAIT_ACK:
       runMesh();
       if (_got_ack) {
-        if (!_home_check) {
+        if (!_home_check && !_field_copy) {
           if (_fallback) setFieldMode(!_field_mode);   // the other base answered: it is the base now
           _fallback = false;
           _misses = 0;
@@ -490,12 +499,15 @@ bool TrackerMode::loop() {
         _deadline = millis() + TRK_LISTEN_MS;
         _state = ST_LISTEN;
       } else if (timeReached(_deadline)) {
-        int max_att = _home_check ? 1 : (_fallback ? TRK_FALLBACK_ATTEMPTS : TRK_MAX_ATTEMPTS);
+        int max_att = (_home_check || _field_copy) ? 1 : (_fallback ? TRK_FALLBACK_ATTEMPTS : TRK_MAX_ATTEMPTS);
         ContactInfo other;
         if (++_attempt < max_att) {
           _state = ST_SEND;
         } else if (_home_check) {
           finishCycle();                               // home out of range: normal on a hike
+        } else if (_field_copy) {
+          _field_idx++;                                // no field base here: next time try the other one
+          finishCycle();
         } else if (_field_mode && !_fallback && ++_field_tries < fieldCount()) {
           _field_idx++;                                // next field base (e.g. the other one is switched off)
           newMessage();
@@ -514,7 +526,15 @@ bool TrackerMode::loop() {
     case ST_LISTEN:
       runMesh();
       if (timeReached(_deadline) && !the_mesh.hasPendingWork()) {
-        ContactInfo home;
+        ContactInfo home, field;
+        // home mode: the home base took the report - one zero-hop copy for the field base, so the app on the
+        // hike sees the dog also while home is in range (no field base near: one short send, then sleep)
+        if (!_field_mode && !_fallback && !_home_check && !_field_copy && !_config_requested
+            && findBase(field, true)) {
+          _field_copy = true;
+          newMessage();
+          return true;
+        }
         if (_field_mode && !_home_check && !_config_requested
             && millis() - _last_home_check >= TRK_HOME_CHECK_MS && findBase(home, false)) {
           _last_home_check = millis();

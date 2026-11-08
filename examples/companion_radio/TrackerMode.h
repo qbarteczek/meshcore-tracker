@@ -90,6 +90,7 @@ private:
   int _field_tries = 0;       // field bases tried in this cycle
   bool _fallback = false;     // this cycle: the active base did not ACK, trying the other one
   bool _home_check = false;   // this cycle: extra copy to the home base while in field mode
+  bool _field_copy = false;   // this cycle: copy to the field base after the home base took the report
   unsigned long _last_home_check = 0;
 
   // position of this cycle and of the last delivered report
@@ -108,11 +109,12 @@ private:
   void finishCycle();
   void composeReport();
   void newMessage();
-  bool targetIsField() const { return _home_check ? false : (_field_mode != _fallback); }
+  bool targetIsField() const { return _home_check ? false : (_field_copy || _field_mode != _fallback); }
   bool findBase(ContactInfo& dest, bool field, int* count = NULL);
   bool isFieldName(const char* name);
   int fieldCount() { ContactInfo b; int n = 0; findBase(b, true, &n); return n; }
   bool isBase(const ContactInfo& c);
+  bool isHomeBase(const ContactInfo& c);
   void setFieldMode(bool on);
   bool handleButton();
   void gpsPower(bool on);
