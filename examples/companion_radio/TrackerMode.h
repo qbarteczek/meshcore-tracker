@@ -1,39 +1,30 @@
 #pragma once
 
 /*
- * Tracker mode for the companion firmware (built with -D TRACKER_MODE=1).
+ * Tracker mode for the companion firmware (built with -D TRACKER_MODE=1). Version 2 ("channel"): simple.
  *
- * Instead of listening all the time, the node sleeps (LoRa radio in warm sleep, GPS in RTC backup,
- * Bluetooth off) and wakes up every `interval` seconds to:
- *   1. get a fresh GPS fix (GPS woken from backup, usually a few seconds),
- *   2. send a short text report to its base node:
- *        "#T1 lat,lon,alt,batt_mv,temp_c,sats,interval_s,flags,seq"   (lat/lon/alt empty without a fix)
- *      flags: b = first report after boot, m = moved > TRK_MOVE_M since the last delivered report,
- *             n = no GPS fix, s = search mode, l = previous reports were not delivered,
- *             f = field mode (the base is the field base, see below)
- *   3. wait for the ACK and listen a few seconds for a command from the base:
- *        "#C i=<interval_s> s=<0|1> c=1 b=<h|f>"
- *        (c=1: open the Bluetooth configuration window, b: use the home / field base)
- *   4. go back to sleep.
- * The base decides the interval (at home / walk / search). The tracker shortens it on its own when it
- * has moved away from the last delivered position, and keeps trying every TRK_LOST_INTERVAL when its
- * reports are not delivered.
+ * The node sleeps (LoRa radio in warm sleep, GPS in RTC backup or off, Bluetooth off) and wakes up to
+ * post one text message to a private group channel (default "Pies", set with trk_ch):
+ *     "<status> 93% 4,18V 9,3°C 12sat nr81 https://maps.google.com/?q=52.22970,21.01220"
+ *   status: start (first after power-on), idzie (moving), stoi (still), OK (2 presses), SOS (3 presses),
+ *           brak GPS (no fix: the link is the last known position, marked "ost.")
+ * No ACKs, no bases, no modes, no commands: whoever has the channel and hears the packet shows it.
+ * The same packet goes out twice:
+ *   1. over a fixed route (trk_path, e.g. the hash of the roof repeater): the repeater passes it on once,
+ *      so the home node hears it without flooding the mesh,
+ *   2. zero-hop a few seconds later: a companion carried by the walker hears it directly.
+ * Order matters: a repeater that already saw the zero-hop copy would not forward the routed one.
+ * Receivers see one message (same payload = same packet hash, duplicates dropped).
  *
- * Two bases:
- *   home base  = the first favourite contact that is not the field base (a node at home, e.g. on a server),
- *   field base = the favourite contact whose name starts with the custom var trk_field (a companion carried on a hike,
- *                built with -D TRACKER_BASE, see TrackerBase.h).
- * Reports go to the active base. When it does not ACK, the tracker tries the other one; whichever ACKs
- * becomes the active base. The field base is reached zero-hop first (no flooding of the mesh). In field
- * mode a copy of the report goes to the home base every TRK_HOME_CHECK_MS, so the home server keeps a
- * coarse track; either base can switch the mode with "#C b=h" / "#C b=f".
+ * Interval, decided by the tracker alone: TRK moving (moved > TRK_MOVE_M from the anchor point) -> move_s,
+ * still for TRK_STILL_AFTER_S -> still_s. SOS: every TRK_SOS_INTERVAL for TRK_SOS_SECS (3 presses again = end).
  *
- * Button: short press = report now; hold 2-6 s = Bluetooth configuration window (10 min, normal
- * companion behaviour, MeshCore app works); hold > 6 s = power off. After boot the configuration
- * window is open for TRK_BOOT_CONFIG_SECS.
+ * Button: 1 press = report now; 2 = "OK"; 3 = SOS / end of SOS; hold 2-6 s = Bluetooth configuration window
+ * (10 min, normal companion, MeshCore app works); hold > 6 s = power off. After boot the window is open for
+ * TRK_BOOT_CONFIG_SECS.
  *
- * Custom vars (MeshCore app / CMD_SET_CUSTOM_VAR): tracker=0|1, trk_int=<default interval s>,
- * trk_field=<name of the field base contact, "-" = none>.
+ * Custom vars: tracker=0|1, trk_ch=<channel name>, trk_path=<hex hashes of the route, "-" = none>,
+ * trk_move=<s>, trk_still=<s>.
  */
 
 #include <Arduino.h>
@@ -47,19 +38,20 @@ public:
   bool loop();          // true = this loop() iteration was handled by tracker mode
   bool isActive() const { return _state != ST_CONFIG; }
 
-  void onAck(uint32_t ack_crc) override;
-  bool onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_ts, const char* text) override;
+  void onAck(uint32_t ack_crc) override { }
+  bool onText(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_ts, const char* text) override { return false; }
   bool setSetting(const char* name, const char* value) override;
   int  formatSettings(char* dest, int max_len) override;
 
 private:
-  enum State { ST_CONFIG, ST_SLEEP, ST_GPS, ST_SEND, ST_WAIT_ACK, ST_LISTEN };
+  enum State { ST_CONFIG, ST_SLEEP, ST_GPS, ST_SEND };
   struct Config {
     uint32_t magic;
     uint8_t enabled;
-    uint8_t reserved[3];
-    uint32_t interval_s;
-    char field[32];       // field base contact name ("" = none); added in trk2, older files end before it
+    uint8_t path_len;      // route of the first copy (number of 1-byte hashes), 0 = only zero-hop
+    uint8_t path[8];
+    uint16_t move_s, still_s;
+    char channel[32];
   };
 
   BaseSerialInterface* _ble = NULL;
@@ -70,36 +62,23 @@ private:
 
   // cycle
   unsigned long _cycle_start = 0, _next_wake = 0, _gps_wake = 0, _fresh_since = 0, _deadline = 0;
-  uint32_t _interval_s = 120;
-  bool _search = false, _boot_report = true, _config_requested = false, _gps_ever_fixed = false;
-  bool _sos = false;               // SOS: 3 short presses; ends with #STOP (s=0) from the base
-  bool _ok_pending = false;        // 2 short presses: "OK" flag in the next report
-  uint8_t _buzz_pending = 0;       // beeps to play after the cycle (z=N, SOS answered)
+  unsigned long _send_done = 0;
+  uint32_t _sent_before = 0;
+  int _to_send = 0;
+  uint32_t _interval_s = 60;
+  bool _boot_report = true, _gps_ever_fixed = false, _ok_pending = false;
+  unsigned long _sos_until = 0;    // != 0: SOS running
   uint8_t _batt_warned = 0;        // 0 ok, 1 low (warned), 2 critical (warned, saving)
   uint8_t _taps = 0;
-  unsigned long _last_tap = 0;
-  uint8_t _attempt = 0;
-  uint16_t _misses = 0;
-  uint32_t _seq = 0, _msg_ts = 0, _expected_ack = 0;
-  bool _got_ack = false;
-  char _msg[96];
+  unsigned long _last_tap = 0, _btn_down = 0;
+  uint32_t _seq = 0;
+  char _msg[120];
 
-  // bases
-  bool _field_mode = false;   // active base = field base
-  int _field_idx = 0;         // which of the field bases (trk_field "A/B") is in use
-  int _field_tries = 0;       // field bases tried in this cycle
-  bool _fallback = false;     // this cycle: the active base did not ACK, trying the other one
-  bool _home_check = false;   // this cycle: extra copy to the home base while in field mode
-  bool _field_copy = false;   // this cycle: copy to the field base after the home base took the report
-  unsigned long _last_home_check = 0;
-
-  // position of this cycle and of the last delivered report
-  bool _fix = false, _moved = false, _have_reported = false;
-  double _lat = 0, _lon = 0, _alt = 0, _rep_lat = 0, _rep_lon = 0, _cand_lat = 0, _cand_lon = 0;
+  // position
+  bool _fix = false, _have_pos = false, _moving = true;
+  double _lat = 0, _lon = 0, _anchor_lat = 0, _anchor_lon = 0;
   long _sats = 0;
-
-  // button
-  unsigned long _btn_down = 0;
+  unsigned long _last_move = 0;
 
   void loadConfig();
   void saveConfig();
@@ -108,14 +87,8 @@ private:
   void startCycle();
   void finishCycle();
   void composeReport();
-  void newMessage();
-  bool targetIsField() const { return _home_check ? false : (_field_copy || _field_mode != _fallback); }
-  bool findBase(ContactInfo& dest, bool field, int* count = NULL);
-  bool isFieldName(const char* name);
-  int fieldCount() { ContactInfo b; int n = 0; findBase(b, true, &n); return n; }
-  bool isBase(const ContactInfo& c);
-  bool isHomeBase(const ContactInfo& c);
-  void setFieldMode(bool on);
+  int sendReport();      // number of packets queued
+  void updateMotion();
   bool handleButton();
   void gpsPower(bool on);
   void blink(int n);

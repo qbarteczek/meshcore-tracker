@@ -3,278 +3,138 @@
 Fork [MeshCore](https://github.com/meshcore-dev/MeshCore) `companion-v1.18.0` (licencja MIT, zob.
 [license.txt](license.txt) – oryginalna nota copyright zachowana). Gałąź `main` dodaje do firmware companion:
 
-- **tryb trackera** dla Seeed SenseCAP **T1000-E** (`env:t1000e_tracker`) – tracker śpi i sam wysyła meldunki z pozycją GPS,
-- **bazę polową** dla companiona noszonego na wędrówce, np. XIAO nRF52840 + Wio-SX1262 z GPS
-  (`env:Xiao_nrf52_tracker_base`) – pokazuje psa w aplikacji MeshCore na telefonie i przekazuje mu polecenia,
+- **tryb trackera** dla Seeed SenseCAP **T1000-E** (`env:t1000e_tracker`) – tracker śpi i sam wysyła meldunki
+  z pozycją GPS na prywatny kanał MeshCore,
 - [obudowę T1000-E](obudowa/) na kamizelkę MOLLE albo obrożę (OpenSCAD, STL).
 
 Strona projektu: <https://qbart.waw.pl>.
 
 *English summary:* the stock companion keeps the LoRa receiver, GPS and Bluetooth on all the time
 (~15–20 mA, about 1.5 days on the T1000-E's 700 mAh battery). In tracker mode the node sleeps (radio in warm
-sleep, GPS in RTC backup, Bluetooth off) and wakes up every *interval* seconds to get a fresh fix and send a
-short direct message to its base, which ACKs it and can answer with a command (interval, search mode,
-Bluetooth window, home/field base). There are two bases: a **home base** (a companion on a home server,
-reached through a repeater) and a **field base** (a companion you carry on a hike, built with
-`TRACKER_BASE`). When the active base does not answer, the tracker tries the other one, zero-hop for the field
-base so the mesh is not flooded. Since trk5, while the home base is active, every delivered report is also
-copied once, zero-hop, to the field base when it is in range (flag `c`; the home base keeps setting the interval),
-so the app on a hike sees the dog even when home can hear it too. The field base shows the dog on the MeshCore app's map, turns the reports
-into readable messages (distance, direction, battery), holds commands typed in the app until the tracker's
-next report, and raises an alarm when reports stop. Everything stays inside a normal MeshCore network.
+sleep, GPS in RTC backup, Bluetooth off), wakes up, gets a fresh fix and posts one text message to a private
+group channel – every minute while moving, every 5 minutes while still (decided by the tracker alone, with
+hysteresis against GPS noise). The same packet is sent twice: first over a fixed route through one repeater
+(the home node hears it, the mesh is not flooded), then zero-hop (a companion carried by the walker hears it
+directly). No ACKs, no bases, no modes and no remote commands – any node with the channel key that hears the
+packet shows it, e.g. the official MeshCore app. Version 2 (trk6) replaced the older direct-message design
+(trk1–trk5: home/field bases, ACKs, commands), which proved fragile on real walks.
 
 ---
 
 ## Jak to wygląda w praktyce
 
 ```
-w domu / na spacerze:   TRK1 (pies) ──► RPT1 (repeater na dachu) ──► BAZA1 – baza domowa (companion na USB w serwerze) ──► Home Assistant
-na wędrówce:            TRK1 (pies) ──► BAZA2 – baza polowa (w kieszeni, zero-hop) ──► aplikacja MeshCore w telefonie
-                        TRK1 ··(co 15 min, jeśli jest zasięg)··► baza domowa
+                   ┌── po trasie przez RPT1 (repeater na dachu) ──► BAZA1 (companion w serwerze) ──► Home Assistant, Traccar
+TRK1 (pies) ──────►┤
+                   └── zero-hop (3 s później) ──────────────────► każdy companion w pobliżu psa ──► aplikacja MeshCore w telefonie
 ```
 
-Nazwy w opisie są umowne: **TRK1** – tracker, **BAZA1** – baza domowa, **BAZA2** – baza polowa, **RPT1** – repeater.
+Nazwy w opisie są umowne: **TRK1** – tracker, **RPT1** – repeater, **BAZA1** – węzeł w domu.
+Każdy, kto ma kanał (nazwa + sekret), widzi meldunki – w domu, na spacerze, w kilku telefonach naraz.
+Nikt nie musi niczego przełączać.
 
-Przełączanie jest samoczynne: gdy aktywna baza nie potwierdza meldunku, tracker próbuje drugiej, a ta, która
-potwierdzi, zostaje bazą. Można też przełączyć ręcznie (polecenie `b=`, w aplikacji `#DOM`, w Home Assistant
-przełącznik „Wędrówka”).
+### Dlaczego tak (wersja 2, trk6)
+
+Wersja 1 (trk1–trk5) wysyłała wiadomości prywatne do „bazy domowej” albo „bazy polowej” z potwierdzeniem,
+a bazy odsyłały polecenia (odstęp, szukanie, przełączenie bazy). Na spacerach wychodziły kolejne przypadki
+brzegowe – np. ostatnia próba floodem kasowała trasę do domu i tracker po powrocie zostawał przy bazie polowej;
+aplikacja w przeglądarce traciła połączenie Bluetooth, gdy ekran gasł. Symulacja na prawdziwych meldunkach
+(4 scenariusze, 6 wariantów) wybrała kanał z dwiema kopiami: najmniej stanów, które mogą się zaciąć, krótkie
+przerwy w domu i w telefonie, ~2,3× mniej eteru niż flood.
 
 ## Tracker (T1000-E)
 
-1. **Sen** – radio LoRa w uśpieniu z zachowaniem konfiguracji, GPS w podtrzymaniu zegara (szybki ponowny fix),
-   Bluetooth wyłączony, procesor w trybie niskiego poboru.
-2. **Pobudka co `interval` s** – GPS budzi się i musi dać *świeżą* pozycję (zdanie NMEA z fixem po pobudce,
-   ≥ 4 satelity, 3 s stabilizacji). Limit: 180 s po włączeniu, potem 60 s. Bez fixu meldunek idzie bez pozycji
-   (nie wysyła starej pozycji).
-3. **Meldunek** – wiadomość prywatna do aktywnej bazy, np.:
+1. **Sen** – radio LoRa w uśpieniu z zachowaniem konfiguracji, GPS w podtrzymaniu zegara (szybki ponowny fix)
+   albo w ciągłej pracy przy odstępie ≤ 60 s, Bluetooth wyłączony.
+2. **Pobudka** – GPS musi dać *świeżą* pozycję (zdanie NMEA z fixem po pobudce, ≥ 4 satelity, 3 s stabilizacji).
+   Limit: 180 s po włączeniu, potem 45 s (w budynku fixu często nie ma – nie marnuje baterii).
+3. **Meldunek** na kanał (domyślnie „Pies”), np.:
 
    ```
-   #T1 52.229700,21.012200,110,3978,21.5,9,900,b,1
-        lat       lon       alt mV   °C   sat int flagi nr
+   TRK1: idzie 93% 4,18V 9,3°C 12sat nr81 https://maps.google.com/?q=52.22970,21.01220
    ```
-   Flagi: `b` pierwszy po włączeniu, `m` przesunął się > 100 m od ostatniej dostarczonej pozycji,
-   `n` brak fixu, `s` tryb szukania, `l` poprzednie meldunki nie doszły, `f` tryb wędrówki (baza polowa),
-   `c` kopia dla bazy polowej, gdy dom odebrał meldunek (od trk5; baza wtedy nie zmienia odstępu).
-   Do 3 prób; ostatnia w trybie szukania idzie floodem (do całej sieci). Jeśli nie dojdzie –
-   2 próby do drugiej bazy.
-4. **Okno poleceń** – po ACK nasłuch 8 s na odpowiedź bazy:
-
-   ```
-   #C i=900 s=0 c=1 b=h
-   ```
-   `i` = odstęp meldunków w sekundach (15–3600), `s` = tryb szukania, `c=1` = otwórz okno Bluetooth,
-   `b=h` / `b=f` = baza domowa / polowa. Polecenia przyjmuje tylko od swoich dwóch baz.
-   Baza odpowiada tylko wtedy, gdy trzeba coś zmienić.
-5. **Sam z siebie** tracker skraca odstęp do 120 s, gdy oddalił się > 100 m od ostatniej dostarczonej pozycji,
-   a gdy meldunki nie dochodzą – próbuje co 120 s (po 10 nieudanych co 300 s).
-6. **Wędrówka** – do bazy polowej tracker nadaje najpierw zero-hop (słyszy to tylko najbliższe otoczenie,
-   repeatery tego nie powtarzają); druga próba też zero-hop, nawet gdy wcześniej poznał trasę przez repeater.
-   W trybie wędrówki co 15 min wysyła kopię meldunku do bazy domowej, ale tylko po znanej trasie (bez floodu).
+   Pierwsze słowo: `start` (po włączeniu), `idzie`, `stoi`, `OK`, `SOS`, `brak GPS` (link = ostatnia znana
+   pozycja, przed nim „ost.”). `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
+   ile meldunków nie doszło.
+4. **Dwie kopie**: najpierw po trasie `trk_path` (repeater przekazuje ją raz, dalej nie idzie), po 3 s zero-hop.
+   Kolejność jest ważna: repeater, który już usłyszał kopię zero-hop, uznałby drugą za powtórkę i jej nie
+   przekazał. Odbiorniki widzą jedną wiadomość (ta sama treść = ten sam skrót pakietu).
+5. **Odstęp** – decyduje tracker: oddalił się > 40 m od punktu odniesienia → *idzie*, co `trk_move` (60 s);
+   3 min bez takiego przesunięcia → *stoi*, co `trk_still` (300 s). Bez poleceń z zewnątrz.
 
 ### Przycisk
 
 | Naciśnięcie | Co robi |
 |---|---|
 | 1× krótko (1 mrugnięcie) | meldunek od razu |
-| 2× krótko (2 mrugnięcia) | **„OK, wszystko w porządku”** – meldunek z flagą `O`; baza i aplikacja pokazują 👍 OK, kiosk w domu pasek |
-| 3× krótko (4 mrugnięcia + sygnał) | **SOS** – meldunek co 30 s, każda ponowna próba floodem (przez repeatery), do odwołania |
+| 2× krótko (2 mrugnięcia) | meldunek **„OK”** (umówiony znak, że wszystko w porządku) |
+| 3× krótko (4 mrugnięcia + sygnał) | **SOS** – meldunek „SOS” co 30 s przez 15 min; ponownie 3× = koniec (2 sygnały) |
 | 2–6 s (3 mrugnięcia) | okno Bluetooth na 10 min – zwykły companion, działa aplikacja MeshCore |
 | > 6 s (5 mrugnięć) | wyłączenie (włącza się ponownie przyciskiem) |
 
 Krótkie naciśnięcia liczą się seriami: tracker czeka 0,8 s po ostatnim i dopiero wtedy wie, czy to 1, 2 czy 3.
-**SOS** trwa, dopóki baza nie odpowie `#STOP` (w aplikacji przycisk „Znaleziony”, w domu – wyłączenie szukania
-w Home Assistant). Wtedy tracker **piszczy 2×** – osoba w terenie wie, że wezwanie dotarło. Baza pokazuje
-`🆘 SOS ·` na początku meldunku, aplikacja włącza alarm z dźwiękiem, a w domu most włącza alarm w Home Assistant
-i alarm na cały ekran na kiosku.
-
-**Zegar** – T1000-E i XIAO nie mają zegara podtrzymywanego baterią: po restarcie zgadują czas z kontaktów (bywa
-przesunięty o godziny). Dlatego baza przy każdym meldunku porównuje czas trackera ze swoim i przy różnicy ponad 2 min
-odsyła mu właściwy (`#C t=`). Baza polowa robi to tylko wtedy, gdy sama dostała czas z telefonu (aplikacja Tracker
-albo MeshCore ustawia go przy połączeniu); w domu czas daje most z serwera (NTP), który pilnuje też zegara swojego
-węzła (przy połączeniu i co godzinę). Od trk4 tracker ustawia też zegar z GPS – tylko z fixu po wybudzeniu (do trk3
-odczyt sprzed uśpienia cofał zegar o cały odstęp, a meldunek dostawał czas końca poprzedniego cyklu).
-
-**Słaba bateria** – tracker ostrzega też osobę, która go nosi: przy 20% dwa krótkie sygnały (raz), przy 10% trzy
-sygnały i **oszczędzanie** (meldunek najwyżej co 10 min, flaga `w`, baza dopisuje „oszczędzanie baterii”), chyba że
-trwa SOS albo szukanie. Ostrzeżenia wracają po naładowaniu do 30%. Baza i aplikacja widzą procent w każdym meldunku
-(aplikacja: zdarzenie przy 20%), a w domu most pokazuje słabą baterię na kiosku.
-
-W drugą stronę: polecenie **`#DZWON`** (w aplikacji „Brzęczyk”) – tracker piszczy 3× przy najbliższym meldunku
-(wezwanie do powrotu albo szukanie trackera po dźwięku). Tracker słucha tylko kilka sekund po meldunku, więc
-sygnał przychodzi z opóźnieniem do jednego odstępu meldunków.
-
 Po włączeniu zasilania przez 3 min działa okno Bluetooth. Tracker nie zasypia, dopóki aplikacja jest połączona.
 
-### Konfiguracja trackera (zmienne własne, aplikacja MeshCore lub `set_custom_var`)
+**Słaba bateria** – przy 20 % dwa krótkie sygnały (raz), przy 10 % trzy sygnały, `bateria!` w meldunku
+i meldunek najwyżej co 10 min (poza SOS). Ostrzeżenia wracają po naładowaniu do 30 %.
+
+**Zegar** – ustawiany z GPS (tylko z fixu po wybudzeniu).
+
+### Konfiguracja (zmienne własne: aplikacja MeshCore lub `set_custom_var`)
 
 | Zmienna | Wartość |
 |---|---|
 | `tracker` | `1` – tryb trackera włączony, `0` – zwykły companion |
-| `trk_int` | domyślny odstęp w sekundach (do pierwszego polecenia bazy), np. `120` |
-| `trk_field` | początek nazwy bazy polowej, np. `BAZA2` (pasuje też do „BAZA2 🏕”); **kilka baz** rozdzielonych `/`, np. `BAZA2/BAZA3` – tracker melduje się do tej, która odpowiada, przy braku odpowiedzi próbuje następnej, a dopiero potem domu; `-` = bez bazy polowej |
+| `trk_ch` | nazwa kanału na trackerze (domyślnie `Pies`) |
+| `trk_path` | trasa pierwszej kopii: skróty repeaterów w hex, np. `a1` (1 bajt na repeater); `-` = tylko zero-hop |
+| `trk_move` | odstęp w ruchu, s (domyślnie 60) |
+| `trk_still` | odstęp w postoju, s (domyślnie 300) |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
-Obie bazy muszą być na trackerze **ulubionymi** kontaktami. Baza domowa = pierwszy ulubiony, który nie jest bazą
-polową. Bazie domowej warto ustawić stałą trasę przez najbliższy repeater, żeby meldunki nie szły floodem.
+Kanał (nazwa + 16-bajtowy sekret) trzeba dodać na trackerze i na każdym odbiorniku. Sekret jest kluczem –
+trzymaj go poza publicznym repozytorium.
 
-## Baza polowa (companion na wędrówkę)
+## Odbiorniki
 
-Zwykły companion BLE MeshCore – aplikacja, czaty, kanały i mapa działają jak zawsze. Dodatkowo:
-
-- **meldunek `#T1`** od trackera zamienia na czytelną wiadomość od kontaktu trackera, np.
-
-  ```
-  1,2 km PN-WSCH · 3,98 V 82% · 22°C · 9 sat · co 60 s
-  https://maps.google.com/?q=52.22970,21.01220
-  ```
-  (odległość i kierunek tylko wtedy, gdy baza ma własny fix GPS; bez niego „GPS ok”),
-- aktualizuje pozycję kontaktu trackera, więc **pies jest na mapie aplikacji**,
-- sama ustawia trackerowi odstęp z `tb_int` (domyślnie 60 s),
-- **polecenia** wpisane w aplikacji jako wiadomość do trackera przechowuje do jego najbliższego meldunku
-  (tracker śpi i słucha tylko kilka sekund po meldunku); aplikacja pokazuje „doręczone”, gdy tracker je potwierdzi:
-
-  | Wpisz | Co robi |
-  |---|---|
-  | `#SZUKAJ` | tryb szukania, meldunek co 30 s |
-  | `#STOP` | koniec szukania, odstęp z `tb_int` |
-  | `#DOM` | wróć do bazy domowej |
-  | `#BT` | otwórz Bluetooth trackera na 10 min |
-  | `#CO 120` | odstęp meldunków w sekundach |
-  | `#C i=60 s=0` | polecenie wprost |
-
-  Kilka poleceń wpisanych przed meldunkiem łączy się w jedno.
-- **alarm** – gdy przez 2 odstępy + 1 min nie ma meldunku, przychodzi wiadomość
-  „⚠ brak meldunku od N min, ostatnio … + link do ostatniej pozycji” (co 10 min, po 3 razach co 30 min).
-
-Zmienna własna bazy: `tb_int` – odstęp meldunków na wędrówce w sekundach, `0` = nie zmieniaj.
-
-Uwaga: polecenia z bazy polowej docierają tylko wtedy, gdy tracker do niej melduje (tryb wędrówki albo,
-od trk5, kopia meldunku). Odstęp (`i=`) z bazy polowej tracker przyjmuje tylko w trybie wędrówki lub z `s=1`.
-Po powrocie do domu wyłącz bazę polową albo wpisz `#DOM` – inaczej tracker dalej melduje do niej.
+- **Telefon**: oficjalna aplikacja MeshCore (Android / iOS) połączona przez Bluetooth z dowolnym companionem
+  z kanałem trackera. Natywna aplikacja działa w tle i daje powiadomienia; link z meldunku otwiera mapę.
+  Włącz powiadomienia dla kanału i wyłącz dla aplikacji oszczędzanie baterii (Android).
+- **Dom**: companion na USB w serwerze + most (poza tym repozytorium) → Traccar (protokół OsmAnd),
+  Home Assistant (MQTT), alarm SOS.
+- [Aplikacja w przeglądarce](app/) z wersji 1 czyta wiadomości prywatne bazy polowej – meldunków z kanału
+  jeszcze nie obsługuje.
 
 ## Śledzenie osób (za zgodą)
 
 Ten sam tracker może nosić **osoba** – dziecko, znajomy, uczestnik wyprawy – tam, gdzie lokalizatory GSM nie działają,
-bo nie ma zasięgu telefonii: w górach, na pustyni, w głębokim lesie, na wodzie. Łączność idzie radiem LoRa
-(869 MHz) prosto do bazy w kieszeni opiekuna albo przez repeatery MeshCore, bez operatora i bez internetu.
+bo nie ma zasięgu telefonii. Łączność idzie radiem LoRa (869 MHz), bez operatora i bez internetu.
 
 - **Zgoda jest warunkiem.** Śledź tylko osobę, która się na to zgodziła i wie, kiedy tracker działa; dziecko –
-  za zgodą opiekuna i z wyjaśnieniem, po co. Pozycja osoby to dane osobowe (RODO): trzymaj je tylko na swoich
-  urządzeniach (aplikacja nic nie wysyła do internetu) i usuń historię, gdy przestanie być potrzebna.
-- W aplikacji w Ustawieniach wybierz **„Kto nosi tracker”: pies / osoba / dziecko** – zmienia ikonę i nazwę na mapie.
-  Kilka trackerów widać naraz (lista trackerów, każdy z własnym stanem, strefami i trasą).
-- **Przycisk**: 2× = „OK, wszystko w porządku” (umówiony meldunek, np. co godzinę albo na szczycie), 3× = SOS
-  (zob. „Przycisk” wyżej). Odpowiedź z bazy: brzęczyk (`#DZWON`) i 2 sygnały po odebraniu SOS.
-- **Zasięg**: bez przeszkód (grań, pustynia, woda) kilka do kilkunastu km między trackerem a bazą; w dolinie, lesie
-  albo za grzbietem dużo mniej. Pomaga baza trzymana wysoko i przenośny repeater MeshCore postawiony na wzniesieniu.
-  W SOS każda ponowna próba idzie floodem, więc meldunek może dojść przez obce repeatery do każdej z baz.
-- **Kilka baz**: każda osoba w grupie może mieć bazę (np. BAZA2 i BAZA3, `trk_field` = `BAZA2/BAZA3`) – tracker
-  melduje się do tej, która jest w zasięgu, i nadal do domu, gdy wróci w zasięg repeatera.
-- **Bateria**: T1000-E (700 mAh) przy meldunku co 2 min wytrzymuje ok. doby z GPS; na długą wyprawę ustaw rzadsze
-  meldunki (`#CO 300`) i włączaj szukanie tylko w razie potrzeby. To pomoc w odnalezieniu, nie certyfikowany
-  sprzęt ratunkowy – w górach nadal zgłaszaj wyjście i miej przy sobie numer ratunkowy (GOPR/TOPR 985, 112).
-
-## Telefon: aplikacja i obsługa na wędrówce
-
-### Jaka aplikacja
-
-Zwykła, oficjalna **aplikacja MeshCore** (Android / iOS) – bez żadnych dodatków. Telefon łączy się przez
-Bluetooth z **BAZA2** (nie z trackerem). Wszystko idzie przez radio LoRa w sieci MeshCore: nie potrzeba
-internetu, zasięgu GSM ani karty SIM w trackerze.
-
-```
-TRK1 (pies) ── LoRa, zero-hop ──► BAZA2 (kieszeń/plecak) ── Bluetooth ──► telefon: aplikacja MeshCore
-           ◄── polecenia #C ─────                      ◄── wpisujesz #SZUKAJ, #DOM ... ──
-```
-
-Na Androidzie zamiast aplikacji MeshCore można użyć **[aplikacji „Tracker psa”](app/)** w Chrome
-(<https://qbart.waw.pl/tracker/>). Układ jest
-wzorowany na Traccarze, ale działa bez serwera i bez internetu: mapa OpenStreetMap z psem, jego śladem i kartą stanu
-(bateria, prędkość, GPS, czas meldunku), historia tras po dniach z odtwarzaniem, wykresem baterii i prędkości,
-raportem (dystans, czas w ruchu, prędkości, przejścia i postoje) i zapisem GPX/KML/CSV, strefy z alarmem (jak
-geofence), lista zdarzeń, radar z psem względem telefonu (GPS i kompas telefonu – odległość i kierunek działają
-nawet wtedy, gdy baza nie ma GPS), przyciski zamiast wpisywania poleceń, alarm z dźwiękiem i wibracją.
-Po pierwszym otwarciu działa bez internetu; mapa pokazuje fragmenty obejrzane wcześniej z internetem. Telefon łączy się przez Bluetooth z jedną aplikacją naraz – albo ta
-strona, albo aplikacja MeshCore.
-
-### Przygotowanie (raz, w domu)
-
-1. Wgraj firmware: tracker – `t1000e_tracker`, baza polowa – `Xiao_nrf52_tracker_base` (zob. niżej).
-2. Połącz aplikację z BAZA2 (PIN Bluetooth domyślnie `123456`). Ustaw radio jak w całej sieci.
-   **Od razu zmień PIN Bluetooth na własny** (6 cyfr, w ustawieniach urządzenia w aplikacji) – na BAZA2 i na TRK1
-   (w oknie Bluetooth trackera). Domyślny PIN jest publiczny: ktoś w zasięgu Bluetooth mógłby się sparować,
-   czytać meldunki i wysyłać polecenia.
-3. **Wymień kontakty** – obie strony muszą się znać, bo wiadomości są szyfrowane parami kluczy:
-   - na BAZA2: dodaj TRK1 (advert z trackera albo udostępniony kontakt),
-   - na TRK1: dodaj BAZA2 i oznacz ją jako **ulubioną** (gwiazdka). Aplikację połączysz z trackerem w oknie
-     Bluetooth: przytrzymaj przycisk 2–6 s (3 mrugnięcia), po włączeniu zasilania okno jest otwarte 3 min.
-4. Na TRK1 ustaw zmienną `trk_field` = początek nazwy BAZA2 (np. `BAZA2`). Aplikacja pokazuje zmienne własne
-   w ustawieniach urządzenia; można też użyć `meshcore-cli` albo biblioteki `meshcore` w Pythonie
-   (`set_custom_var`).
-5. Opcjonalnie na BAZA2 `tb_int` – jak często pies ma się meldować na wędrówce (domyślnie 60 s).
-6. Rozłącz aplikację od trackera i połącz z powrotem z BAZA2. Tracker nie zaśnie, dopóki aplikacja jest z nim
-   połączona – w terenie telefon ma być połączony tylko z bazą.
-
-### Na wędrówce
-
-- Weź BAZA2 (włączoną, z powerbankiem – zwykły companion bierze ok. 15–20 mA) i telefon z aplikacją połączoną z BAZA2.
-- **Przełączenie jest samo**: gdy tracker straci bazę domową, kolejny meldunek idzie do BAZA2 (flaga `f`).
-  Od razu można też przełączyć z domu (`#C b=f` z bazy domowej, np. przełącznikiem w Home Assistant).
-- **Co widać w aplikacji** – w czacie z kontaktem TRK1 przychodzi wiadomość co meldunek:
-
-  ```
-  1,2 km PN-WSCH · 3,98 V 82% · 22°C · 9 sat · co 60 s
-  https://maps.google.com/?q=52.22970,21.01220
-  ```
-  Odległość i kierunek liczone od BAZA2 – tylko gdy baza ma swój GPS z fixem; bez niego jest „GPS ok” i link.
-  Pozycja kontaktu TRK1 jest aktualizowana, więc tracker widać na **mapie** w aplikacji.
-- **Polecenia** – wpisz jako zwykłą wiadomość do TRK1 (czekają w BAZA2 do najbliższego meldunku, bo tracker śpi;
-  aplikacja pokaże „doręczone”, gdy tracker potwierdzi):
-
-  | Wpisz | Kiedy |
-  |---|---|
-  | `#SZUKAJ` | pies zniknął z oczu – meldunek co 30 s, ostatnia próba floodem przez całą sieć |
-  | `#STOP` | znaleziony – z powrotem co `tb_int` |
-  | `#CO 300` | rzadsze meldunki, żeby oszczędzać baterię trackera |
-  | `#BT` | otworzyć Bluetooth trackera na 10 min (np. zmiana ustawień w terenie) |
-  | `#DOM` | koniec wędrówki – tracker wraca do bazy domowej |
-
-- **Alarm** – gdy meldunki przestaną przychodzić (2 odstępy + 1 min), w czacie TRK1 pojawia się
-  „⚠ brak meldunku od N min, ostatnio … + link do ostatniej pozycji”, potem co 10 min (po 3 razach co 30 min).
-  Po odzyskaniu kontaktu wiadomość zaczyna się od „✅ kontakt wrócił”.
-
-### Wskazówki
-
-- **Powiadomienia**: włącz powiadomienia aplikacji MeshCore i wyłącz dla niej oszczędzanie baterii (Android),
-  inaczej system może zerwać połączenie Bluetooth w tle i alarm przyjdzie dopiero po otwarciu aplikacji.
-- **Mapa offline**: podkład mapy w aplikacji MeshCore pobiera się z internetu. Bez zasięgu ściągnij wcześniej
-  obszar w Google Maps lub OsmAnd – link z meldunku otworzy się wtedy także offline. W aplikacji „Tracker psa”
-  przed wyjazdem obejrzyj okolicę na mapie w kilku powiększeniach – obejrzane fragmenty zostają w telefonie.
-- **Zasięg**: zero-hop między psem a bazą to zwykle kilkaset metrów do kilku km w terenie otwartym, w lesie
-  i za wzgórzem dużo mniej. Gdy w okolicy są repeatery, `#SZUKAJ` pozwala ostatniej próbie meldunku pójść
-  przez nie (flood).
-- **Bateria trackera**: przy meldunku co 60 s z GPS w ciągłej pracy pobór rośnie; na długą trasę rozważ `#CO 120`
-  albo więcej, a `#SZUKAJ` włączaj tylko na czas szukania.
-- **Po powrocie**: wpisz `#DOM` albo po prostu wyłącz BAZA2 – tracker po 3 nieudanych próbach sam wróci do
-  bazy domowej.
-- Telefon może być połączony tylko z jednym urządzeniem MeshCore naraz. Do zwykłych rozmów na wędrówce używaj
-  BAZA2 – to pełny companion (czaty, kanały, mapa).
+  za zgodą opiekuna. Pozycja osoby to dane osobowe (RODO): kanał tylko dla zaufanych, historię usuwaj, gdy
+  przestanie być potrzebna.
+- **Przycisk**: 2× = „OK” (umówiony meldunek), 3× = SOS.
+- **Zasięg**: bez przeszkód kilka do kilkunastu km między trackerem a odbiornikiem; w dolinie, lesie albo za
+  grzbietem dużo mniej. Pomaga odbiornik trzymany wysoko i przenośny repeater.
+- To pomoc w odnalezieniu, nie certyfikowany sprzęt ratunkowy – w górach zgłaszaj wyjście i miej przy sobie
+  numer ratunkowy (GOPR/TOPR 985, 112).
 
 ## Budowanie i wgrywanie
 
 ```
 pio run -e t1000e_tracker              # tracker (T1000-E)
-pio run -e Xiao_nrf52_tracker_base     # baza polowa (XIAO nRF52840 + Wio-SX1262, GPS na D6/D7)
 python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o firmware.uf2
 ```
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
-Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`). Klucze, kontakty i ustawienia zostają przy aktualizacji (także ustawienia
-trackera z wersji trk1).
+Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`).
+Klucze, kontakty i kanały zostają przy aktualizacji. Z wersji 1 przechodzi tylko `tracker=1`; kanał i `trk_path`
+trzeba ustawić.
 
-Baza dla XIAO ma GPS Ai-Thinker GP-02 na UART: GP-02 TX → D7, RX → D6, VCC → 3V3; magistrala I2C jest
-przeniesiona na piny 12/13. Bez podłączonego GPS działa tak samo, tylko bez odległości i kierunku.
+Firmware wersji 1 (trk1–trk5, bazy i polecenia) jest w historii repozytorium i w `release/`
+(`TrackerBase.{h,cpp}`, `env:Xiao_nrf52_tracker_base` zostały dla porządku, wersja 2 ich nie używa).
+Odbiornikiem może być zwykły companion, np. `env:Xiao_nrf52_companion_radio_ble_gps`
+(GPS Ai-Thinker GP-02 na UART: GP-02 TX → D7, RX → D6, VCC → 3V3; I2C na pinach 12/13).
 
 ## Obudowa
 
@@ -285,8 +145,8 @@ krawędziami, oknem na magnetyczne ładowanie i schematem montażu ([obudowa/mon
 
 | Plik | Zmiana |
 |---|---|
-| `examples/companion_radio/TrackerMode.{h,cpp}` | tryb trackera, dwie bazy |
-| `examples/companion_radio/TrackerBase.{h,cpp}` | baza polowa |
+| `examples/companion_radio/TrackerMode.{h,cpp}` | tryb trackera (wersja 2: kanał) |
+| `examples/companion_radio/TrackerBase.{h,cpp}` | baza polowa (tylko wersja 1) |
 | `examples/companion_radio/TrackerHooks.h`, `TrackerUtil.h` | wspólny interfejs i pomocnicze funkcje |
 | `examples/companion_radio/main.cpp` | uruchomienie (tylko z `-D TRACKER_MODE` albo `-D TRACKER_BASE`) |
 | `examples/companion_radio/MyMesh.{h,cpp}` | haki: ACK, wiadomości przychodzące i z aplikacji, zmienne własne, pozycja kontaktu |
@@ -298,25 +158,14 @@ krawędziami, oknem na magnetyczne ładowanie i schematem montażu ([obudowa/mon
 
 Bez `-D TRACKER_MODE` / `-D TRACKER_BASE` firmware zachowuje się jak oryginalny companion.
 
-## Strona serwera
-
-Bazą domową jest companion podłączony do serwera przez USB; mały program (most) odbiera meldunki, wysyła je do
-[Traccar](https://www.traccar.org/) (protokół OsmAnd) i do Home Assistant (MQTT), a odpowiada poleceniami:
-odstęp zależny od odległości od domu i pory, tryb szukania, okno Bluetooth, przełącznik „Wędrówka”.
-Meldunków z flagą `f` nie zmienia (o odstępie decyduje wtedy baza polowa) i nie podnosi dla nich alarmu
-„brak kontaktu”. Most nie jest częścią tego repozytorium.
-
 ## Bezpieczeństwo
 
-- Meldunki i polecenia między trackerem a bazami idą jako wiadomości prywatne MeshCore, szyfrowane kluczami
-  urządzeń; inne węzły sieci ich nie odczytają. Tracker przyjmuje polecenia `#C` tylko od swoich dwóch baz
-  (ulubionych kontaktów).
-- Słabym miejscem jest Bluetooth: **zmień domyślny PIN `123456`** na BAZA2 i TRK1. Kto zna PIN i jest w zasięgu
-  Bluetooth (kilkanaście metrów), może połączyć się z bazą jak Ty.
-- Aplikacja w przeglądarce nie wysyła niczego do internetu i nie przechowuje danych na serwerze – wszystko
-  zostaje w telefonie.
-- Nazwy urządzeń widać w sieci MeshCore (adverty); jeśli nie chcesz, żeby nazwa trackera zdradzała, co to jest,
-  nazwij go neutralnie.
+- Meldunki idą na kanał prywatny, szyfrowany jego sekretem; węzły bez sekretu ich nie odczytają, a repeater
+  na trasie tylko je przekazuje. Kto zna sekret, widzi pozycję – udostępniaj go tylko zaufanym.
+- Tracker nie przyjmuje żadnych poleceń przez radio.
+- Słabym miejscem jest Bluetooth: **zmień domyślny PIN `123456`** na trackerze i odbiornikach.
+- Nazwy urządzeń widać w sieci MeshCore (adverty i nagłówek wiadomości na kanale); jeśli nie chcesz, żeby
+  nazwa trackera zdradzała, co to jest, nazwij go neutralnie.
 
 ## Licencja
 
