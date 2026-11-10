@@ -7,7 +7,14 @@ Fork [MeshCore](https://github.com/meshcore-dev/MeshCore) `companion-v1.18.0` (l
   z pozycją GPS na prywatny kanał MeshCore,
 - [obudowę T1000-E](obudowa/) na kamizelkę MOLLE albo obrożę (OpenSCAD, STL).
 
-Strona projektu: <https://qbart.waw.pl>.
+Strona projektu: <https://qbart.waw.pl>. Aplikacja na telefon: [TrackDog](https://github.com/qbarteczek/trackdog)
+(instrukcja użytkowania i opis sprzętu są w jej repozytorium, w `docs/`).
+
+**Aktualizacje:** wraz z kolejnymi wydaniami MeshCore będą tu publikowane zaktualizowane wersje firmware
+trackera – zmiany tego forka są przenoszone na nową wersję MeshCore, budowane i udostępniane w
+[release/](release/). Nazwa pliku podaje obie wersje: `t1000e_tracker-v1.18.0-trk7` = MeshCore 1.18.0 +
+7. wersja trybu trackera. Pozostałe urządzenia (radio przy sobie, repeater, węzeł w domu) używają oryginalnego
+firmware MeshCore.
 
 *English summary:* the stock companion keeps the LoRa receiver, GPS and Bluetooth on all the time
 (~15–20 mA, about 1.5 days on the T1000-E's 700 mAh battery). In tracker mode the node sleeps (radio in warm
@@ -137,7 +144,7 @@ python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o 
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
-**trk7 jest zbudowane, ale jeszcze nie sprawdzone na urządzeniu** – sprawdzona na spacerach jest trk6.
+**trk7 działa na urządzeniu (meldunki z prędkością i aktywnością), ale nie było jeszcze na spacerze** – sprawdzona na spacerach jest trk6.
 Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`).
 Klucze, kontakty i kanały zostają przy aktualizacji. Z wersji 1 przechodzi tylko `tracker=1`; kanał i `trk_path`
 trzeba ustawić.
