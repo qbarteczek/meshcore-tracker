@@ -22,6 +22,10 @@ extern MyMesh the_mesh;
 #define TRK_DEFAULT_CHANNEL    "Pies"
 #define TRK_DEFAULT_MOVE_S     60           // chosen by simulation: 30 s = 2x airtime, ~same result
 #define TRK_DEFAULT_STILL_S    300
+#define TRK_DEFAULT_FAST_S     30           // 2 copies of ~1.2 s every 30 s = 8 % duty cycle (limit 10 %)
+#define TRK_FAST_KMH_X10       70           // faster than this (GPS) = fast
+#define TRK_FAST_END_KMH_X10   50           // slower than this = no longer fast
+#define TRK_ACC_WAKE_GAP_S     60           // at most one early wake-up by the accelerometer per this time
 #define TRK_MIN_INTERVAL       15
 #define TRK_MAX_INTERVAL       3600
 #define TRK_MOVE_M             40.0         // farther than this from the anchor point = moving (GPS noise ~20 m)
@@ -58,14 +62,15 @@ void TrackerMode::loadConfig() {
   _cfg.magic = TRK_MAGIC;
   _cfg.move_s = TRK_DEFAULT_MOVE_S;
   _cfg.still_s = TRK_DEFAULT_STILL_S;
+  _cfg.fast_s = TRK_DEFAULT_FAST_S;
+  _cfg.accel = 1;
   strcpy(_cfg.channel, TRK_DEFAULT_CHANNEL);
 #if defined(NRF52_PLATFORM)
   File f(InternalFS);
   if (f.open(TRK_CONFIG_FILE, FILE_O_READ)) {
-    Config c;
-    memset(&c, 0, sizeof(c));
+    Config c = _cfg;   // a file written by trk6 is shorter: the new fields keep their defaults
     int n = f.read((uint8_t*)&c, sizeof(c));
-    if (n == (int)sizeof(c) && c.magic == TRK_MAGIC) _cfg = c;
+    if (n >= (int)offsetof(Config, fast_s) && c.magic == TRK_MAGIC) _cfg = c;
     else if (n >= 5 && c.magic == TRK_MAGIC_V1) _cfg.enabled = c.enabled;   // old version: keep "tracker on"
     f.close();
   }
@@ -74,6 +79,9 @@ void TrackerMode::loadConfig() {
   if (_cfg.path_len > sizeof(_cfg.path)) _cfg.path_len = 0;
   _cfg.move_s = constrain(_cfg.move_s, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
   _cfg.still_s = constrain(_cfg.still_s, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
+  if (_cfg.fast_s == 0) _cfg.fast_s = TRK_DEFAULT_FAST_S;   // padding of a trk6 file
+  _cfg.fast_s = constrain(_cfg.fast_s, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
+  _cfg.accel = _cfg.accel ? 1 : 0;
 }
 
 void TrackerMode::saveConfig() {
@@ -113,6 +121,11 @@ bool TrackerMode::setSetting(const char* name, const char* value) {
     _cfg.move_s = constrain(atoi(value), TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
   } else if (strcmp(name, "trk_still") == 0) {
     _cfg.still_s = constrain(atoi(value), TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
+  } else if (strcmp(name, "trk_fast") == 0) {
+    _cfg.fast_s = constrain(atoi(value), TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
+  } else if (strcmp(name, "trk_acc") == 0) {
+    _cfg.accel = (value[0] == '1') ? 1 : 0;
+    if (!_cfg.accel) _accel.off();
   } else {
     return false;
   }
@@ -126,8 +139,8 @@ int TrackerMode::formatSettings(char* dest, int max_len) {
     char* dp = path;
     for (int i = 0; i < _cfg.path_len; i++) dp += sprintf(dp, "%02x", _cfg.path[i]);
   }
-  return snprintf(dest, max_len, ",tracker:%u,trk_ch:%s,trk_path:%s,trk_move:%u,trk_still:%u", _cfg.enabled,
-                  _cfg.channel, path, _cfg.move_s, _cfg.still_s);
+  return snprintf(dest, max_len, ",tracker:%u,trk_ch:%s,trk_path:%s,trk_move:%u,trk_still:%u,trk_fast:%u,trk_acc:%u",
+                  _cfg.enabled, _cfg.channel, path, _cfg.move_s, _cfg.still_s, _cfg.fast_s, _cfg.accel);
 }
 
 // ------------------------------------------------------------------ mode switching
@@ -145,6 +158,8 @@ void TrackerMode::enterConfig(uint32_t secs) {
 
 void TrackerMode::enterTracker() {
   if (_ble) _ble->disable();
+  if (_cfg.accel && !_accel.ok()) _accel.begin();
+  _accel_wake_ok = millis() + TRK_ACC_WAKE_GAP_S * 1000UL;
   _next_wake = millis();      // report right away
   _state = ST_SLEEP;
 }
@@ -295,6 +310,11 @@ void TrackerMode::composeReport() {
   dp += sprintf(dp, "\xC2\xB0" "C");   // °C
 #endif
   if (_fix) dp += sprintf(dp, " %ldsat", _sats);
+  if (_fix && _speed_x10 >= 0) {
+    dp += sprintf(dp, " %ld,%ldkm/h", _speed_x10 / 10, _speed_x10 % 10);
+    if (_course >= 0 && _speed_x10 >= 20) dp += sprintf(dp, " k%d", _course);   // course is noise when slow
+  }
+  if (_accel.activity() >= 0) dp += sprintf(dp, " a%d", _accel.activity());
   if (_batt_warned == 2) dp += sprintf(dp, " bateria!");
   dp += sprintf(dp, " nr%lu", (unsigned long)_seq);
   if (_have_pos) {
@@ -336,7 +356,13 @@ int TrackerMode::sendReport() {
 
 void TrackerMode::finishCycle() {
   checkBattery();
-  uint32_t iv = _moving ? _cfg.move_s : _cfg.still_s;
+  if (_fix && _speed_x10 >= 0) {
+    if (_speed_x10 >= TRK_FAST_KMH_X10) _fast = true;
+    else if (_speed_x10 < TRK_FAST_END_KMH_X10) _fast = false;
+  }
+  if (!_moving) _fast = false;
+  uint32_t iv = _moving ? (_fast ? _cfg.fast_s : _cfg.move_s) : _cfg.still_s;
+  _accel.resetStats();
   if (_sos_until) {
     if (timeReached(_sos_until)) _sos_until = 0;
     else iv = TRK_SOS_INTERVAL;
@@ -370,6 +396,13 @@ bool TrackerMode::loop() {
         radio_driver.sleepRadio();
         _radio_asleep = true;
       }
+      _accel.poll();
+      // standing still and the accelerometer feels sustained motion: do not wait out the long interval
+      if (!_moving && !_sos_until && _batt_warned < 2 && _accel.movingNow() && timeReached(_accel_wake_ok)
+          && (long)(_next_wake - millis()) > 10000L) {
+        _accel_wake_ok = millis() + TRK_ACC_WAKE_GAP_S * 1000UL;
+        _next_wake = millis();
+      }
       if (timeReached(_next_wake)) {
         startCycle();
       } else {
@@ -390,6 +423,9 @@ bool TrackerMode::loop() {
         _lat = lp->getLatitude() / 1000000.0;
         _lon = lp->getLongitude() / 1000000.0;
         _sats = lp->satellitesCount();
+        long kn = lp->getSpeedMilliKnots(), crs = lp->getCourseMilliDeg();
+        _speed_x10 = kn >= 0 ? (kn * 1852L + 50000L) / 100000L : -1;   // 1 knot = 1.852 km/h
+        _course = crs >= 0 ? (int)((crs + 500) / 1000) % 360 : -1;
         sensors.node_lat = _lat;
         sensors.node_lon = _lon;
         sensors.node_altitude = lp->getAltitude() / 1000.0;
@@ -407,6 +443,7 @@ bool TrackerMode::loop() {
         _send_done = millis();
         _state = ST_SEND;
       } else {
+        _accel.poll();
         delay(2);
       }
       return true;

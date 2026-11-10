@@ -55,12 +55,18 @@ przerwy w domu i w telefonie, ~2,3× mniej eteru niż flood.
    ```
    Pierwsze słowo: `start` (po włączeniu), `idzie`, `stoi`, `OK`, `SOS`, `brak GPS` (link = ostatnia znana
    pozycja, przed nim „ost.”). `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
-   ile meldunków nie doszło.
+   ile meldunków nie doszło. Od **trk7** meldunek ma też prędkość i kurs z GPS oraz aktywność z akcelerometru:
+   `… 12sat 5,4km/h k270 a12 nr81 …` (kurs tylko powyżej 2 km/h; `a` = 0–99, średnia zmiana przyspieszenia).
 4. **Dwie kopie**: najpierw po trasie `trk_path` (repeater przekazuje ją raz, dalej nie idzie), po 3 s zero-hop.
    Kolejność jest ważna: repeater, który już usłyszał kopię zero-hop, uznałby drugą za powtórkę i jej nie
    przekazał. Odbiorniki widzą jedną wiadomość (ta sama treść = ten sam skrót pakietu).
 5. **Odstęp** – decyduje tracker: oddalił się > 40 m od punktu odniesienia → *idzie*, co `trk_move` (60 s);
    3 min bez takiego przesunięcia → *stoi*, co `trk_still` (300 s). Bez poleceń z zewnątrz.
+   Od **trk7**: prędkość z GPS powyżej 7 km/h → co `trk_fast` (30 s; wraca poniżej 5 km/h). Krócej się nie da:
+   dwie kopie to ~2,4 s nadawania, a limit w tym paśmie to 10 % czasu.
+6. **Akcelerometr** (trk7, QMA6100P w T1000-E, 4 odczyty na sekundę): gdy tracker *stoi* i poczuje ≥ 2 s
+   ciągłego ruchu, melduje od razu (najwyżej raz na minutę), zamiast czekać do końca 5 minut. Nigdy nie wydłuża
+   odstępu – bez czujnika albo z `trk_acc=0` tracker działa jak trk6.
 
 ### Przycisk
 
@@ -89,6 +95,8 @@ i meldunek najwyżej co 10 min (poza SOS). Ostrzeżenia wracają po naładowaniu
 | `trk_path` | trasa pierwszej kopii: skróty repeaterów w hex, np. `a1` (1 bajt na repeater); `-` = tylko zero-hop |
 | `trk_move` | odstęp w ruchu, s (domyślnie 60) |
 | `trk_still` | odstęp w postoju, s (domyślnie 300) |
+| `trk_fast` | odstęp powyżej 7 km/h, s (domyślnie 30) – od trk7 |
+| `trk_acc` | `1` – akcelerometr budzi tracker z postoju i liczy aktywność (domyślnie), `0` – wyłączony – od trk7 |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
 Kanał (nazwa + 16-bajtowy sekret) trzeba dodać na trackerze i na każdym odbiorniku. Sekret jest kluczem –
@@ -96,7 +104,9 @@ trzymaj go poza publicznym repozytorium.
 
 ## Odbiorniki
 
-- **Telefon**: oficjalna aplikacja MeshCore (Android / iOS) połączona przez Bluetooth z dowolnym companionem
+- **Telefon, ślad i kompas**: [TrackDog](https://github.com/qbarteczek/trackdog) – natywna aplikacja na Androida,
+  która w tle zabiera meldunki z companiona, zapisuje ślad, pokazuje kierunek i odległość do psa oraz prędkości.
+- **Telefon, bez dodatków**: oficjalna aplikacja MeshCore (Android / iOS) połączona przez Bluetooth z dowolnym companionem
   z kanałem trackera. Natywna aplikacja działa w tle i daje powiadomienia; link z meldunku otwiera mapę.
   Włącz powiadomienia dla kanału i wyłącz dla aplikacji oszczędzanie baterii (Android).
 - **Dom**: companion na USB w serwerze + most (poza tym repozytorium) → Traccar (protokół OsmAnd),
@@ -127,6 +137,7 @@ python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o 
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
+**trk7 jest zbudowane, ale jeszcze nie sprawdzone na urządzeniu** – sprawdzona na spacerach jest trk6.
 Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`).
 Klucze, kontakty i kanały zostają przy aktualizacji. Z wersji 1 przechodzi tylko `tracker=1`; kanał i `trk_path`
 trzeba ustawić.
@@ -146,12 +157,13 @@ krawędziami, oknem na magnetyczne ładowanie i schematem montażu ([obudowa/mon
 | Plik | Zmiana |
 |---|---|
 | `examples/companion_radio/TrackerMode.{h,cpp}` | tryb trackera (wersja 2: kanał) |
+| `examples/companion_radio/TrackerAccel.h` | akcelerometr QMA6100P: ruch i aktywność (trk7) |
 | `examples/companion_radio/TrackerBase.{h,cpp}` | baza polowa (tylko wersja 1) |
 | `examples/companion_radio/TrackerHooks.h`, `TrackerUtil.h` | wspólny interfejs i pomocnicze funkcje |
 | `examples/companion_radio/main.cpp` | uruchomienie (tylko z `-D TRACKER_MODE` albo `-D TRACKER_BASE`) |
 | `examples/companion_radio/MyMesh.{h,cpp}` | haki: ACK, wiadomości przychodzące i z aplikacji, zmienne własne, pozycja kontaktu |
 | `src/helpers/radiolib/RadioLibWrappers.{h,cpp}` | `sleepRadio()` / `wakeRadio()` |
-| `src/helpers/sensors/LocationProvider.h`, `MicroNMEALocationProvider.h` | `lastFixMillis()` – świeżość fixu |
+| `src/helpers/sensors/LocationProvider.h`, `MicroNMEALocationProvider.h` | `lastFixMillis()` – świeżość fixu; prędkość i kurs z RMC (trk7) |
 | `variants/t1000-e/platformio.ini` | `env:t1000e_tracker` |
 | `variants/xiao_nrf52/platformio.ini`, `target.cpp` | GPS na UART D6/D7, `env:Xiao_nrf52_tracker_base` |
 | `obudowa/` | obudowa T1000-E |

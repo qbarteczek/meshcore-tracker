@@ -29,6 +29,10 @@ public:
     // millis() of the last NMEA sentence carrying a valid fix (0 = never); lets callers tell a fresh
     // fix from the last position kept by the parser while the receiver was asleep
     virtual unsigned long lastFixMillis() { return 0; }
+    // speed over ground in thousandths of a knot and course in thousandths of a degree, from the last
+    // RMC sentence; -1 = not available
+    virtual long getSpeedMilliKnots() { return -1; }
+    virtual long getCourseMilliDeg() { return -1; }
 
     // Format compact diagnostics in the caller-provided buffer. Providers that
     // have more information (for example UART counters) can override this.

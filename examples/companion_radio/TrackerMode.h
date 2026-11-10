@@ -5,7 +5,8 @@
  *
  * The node sleeps (LoRa radio in warm sleep, GPS in RTC backup or off, Bluetooth off) and wakes up to
  * post one text message to a private group channel (default "Pies", set with trk_ch):
- *     "<status> 93% 4,18V 9,3°C 12sat nr81 https://maps.google.com/?q=52.22970,21.01220"
+ *     "<status> 93% 4,18V 9,3°C 12sat 5,4km/h k270 a12 nr81 https://maps.google.com/?q=52.22970,21.01220"
+ *   5,4km/h k270 = GPS speed and course (only with a fix), a12 = activity from the accelerometer (0..99)
  *   status: start (first after power-on), idzie (moving), stoi (still), OK (2 presses), SOS (3 presses),
  *           brak GPS (no fix: the link is the last known position, marked "ost.")
  * No ACKs, no bases, no modes, no commands: whoever has the channel and hears the packet shows it.
@@ -16,21 +17,24 @@
  * Order matters: a repeater that already saw the zero-hop copy would not forward the routed one.
  * Receivers see one message (same payload = same packet hash, duplicates dropped).
  *
- * Interval, decided by the tracker alone: TRK moving (moved > TRK_MOVE_M from the anchor point) -> move_s,
- * still for TRK_STILL_AFTER_S -> still_s. SOS: every TRK_SOS_INTERVAL for TRK_SOS_SECS (3 presses again = end).
+ * Interval, decided by the tracker alone: moving (moved > TRK_MOVE_M from the anchor point) -> move_s,
+ * moving faster than TRK_FAST_KMH -> fast_s, still for TRK_STILL_AFTER_S -> still_s.
+ * The accelerometer (T1000-E) ends a "still" sleep early when the tracker starts to move; it never
+ * lengthens an interval. SOS: every TRK_SOS_INTERVAL for TRK_SOS_SECS (3 presses again = end).
  *
  * Button: 1 press = report now; 2 = "OK"; 3 = SOS / end of SOS; hold 2-6 s = Bluetooth configuration window
  * (10 min, normal companion, MeshCore app works); hold > 6 s = power off. After boot the window is open for
  * TRK_BOOT_CONFIG_SECS.
  *
  * Custom vars: tracker=0|1, trk_ch=<channel name>, trk_path=<hex hashes of the route, "-" = none>,
- * trk_move=<s>, trk_still=<s>.
+ * trk_move=<s>, trk_still=<s>, trk_fast=<s>, trk_acc=0|1.
  */
 
 #include <Arduino.h>
 #include <helpers/ContactInfo.h>
 #include <helpers/BaseSerialInterface.h>
 #include "TrackerHooks.h"
+#include "TrackerAccel.h"
 
 class TrackerMode : public TrackerHooks {
 public:
@@ -52,6 +56,9 @@ private:
     uint8_t path[8];
     uint16_t move_s, still_s;
     char channel[32];
+    // added in trk7 (older files are shorter: defaults apply)
+    uint16_t fast_s;       // interval above TRK_FAST_KMH
+    uint8_t accel;         // 1 = use the accelerometer
   };
 
   BaseSerialInterface* _ble = NULL;
@@ -72,13 +79,20 @@ private:
   uint8_t _taps = 0;
   unsigned long _last_tap = 0, _btn_down = 0;
   uint32_t _seq = 0;
-  char _msg[120];
+  char _msg[160];
 
   // position
   bool _fix = false, _have_pos = false, _moving = true;
   double _lat = 0, _lon = 0, _anchor_lat = 0, _anchor_lon = 0;
   long _sats = 0;
   unsigned long _last_move = 0;
+  long _speed_x10 = -1;            // km/h * 10 from GPS, -1 = unknown
+  int _course = -1;                // degrees, -1 = unknown
+  bool _fast = false;
+
+  // accelerometer
+  TrackerAccel _accel;
+  unsigned long _accel_wake_ok = 0;   // earliest time of the next early wake-up
 
   void loadConfig();
   void saveConfig();

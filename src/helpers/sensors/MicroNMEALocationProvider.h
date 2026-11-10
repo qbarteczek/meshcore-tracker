@@ -256,6 +256,8 @@ public :
     }
 
     unsigned long lastFixMillis() override { return _fix_seen ? _last_fix_ms : 0; }
+    long getSpeedMilliKnots() override { long v = nmea.getSpeed(); return v < 0 ? -1 : v; }
+    long getCourseMilliDeg() override { long v = nmea.getCourse(); return v < 0 ? -1 : v; }
 
     void formatDiagnostics(char* out, size_t out_size) override {
         if (out_size == 0) return;
