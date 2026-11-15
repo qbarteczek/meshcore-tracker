@@ -5,7 +5,8 @@ Fork [MeshCore](https://github.com/meshcore-dev/MeshCore) `companion-v1.18.0` (l
 
 - **tryb trackera** dla Seeed SenseCAP **T1000-E** (`env:t1000e_tracker`) – tracker śpi i sam wysyła meldunki
   z pozycją GPS na prywatny kanał MeshCore,
-- [obudowę T1000-E](obudowa/) na kamizelkę MOLLE albo obrożę (OpenSCAD, STL).
+- obudowa T1000-E na kamizelkę MOLLE albo obrożę (OpenSCAD, STL) jest od 2026-11-15 w repozytorium TrackDog:
+  [hardware/tracker-t1000e](https://github.com/qbarteczek/trackdog/tree/main/hardware/tracker-t1000e).
 
 Strona projektu: <https://qbart.waw.pl>. Aplikacja na telefon: [TrackDog](https://github.com/qbarteczek/trackdog)
 (instrukcja użytkowania i opis sprzętu są w jej repozytorium, w `docs/`).
@@ -156,8 +157,9 @@ Odbiornikiem może być zwykły companion, np. `env:Xiao_nrf52_companion_radio_b
 
 ## Obudowa
 
-[obudowa/](obudowa/) – obudowa T1000-E na taktyczną kamizelkę psa (MOLLE) lub obrożę, z zaokrąglonymi
-krawędziami, oknem na magnetyczne ładowanie i schematem montażu ([obudowa/montaz-molle.html](obudowa/montaz-molle.html)).
+Obudowa T1000-E na taktyczną kamizelkę psa (MOLLE) lub obrożę została przeniesiona do repozytorium TrackDog,
+które zbiera cały tracker psa (aplikację i sprzęt): [trackdog/hardware/tracker-t1000e](https://github.com/qbarteczek/trackdog/tree/main/hardware/tracker-t1000e).
+Wcześniejsze wersje są w historii tego repozytorium (folder `obudowa/`).
 
 ## Zmiany względem MeshCore
 
@@ -173,7 +175,6 @@ krawędziami, oknem na magnetyczne ładowanie i schematem montażu ([obudowa/mon
 | `src/helpers/sensors/LocationProvider.h`, `MicroNMEALocationProvider.h` | `lastFixMillis()` – świeżość fixu; prędkość i kurs z RMC (trk7) |
 | `variants/t1000-e/platformio.ini` | `env:t1000e_tracker` |
 | `variants/xiao_nrf52/platformio.ini`, `target.cpp` | GPS na UART D6/D7, `env:Xiao_nrf52_tracker_base` |
-| `obudowa/` | obudowa T1000-E |
 
 Bez `-D TRACKER_MODE` / `-D TRACKER_BASE` firmware zachowuje się jak oryginalny companion.
 
@@ -189,5 +190,5 @@ Bez `-D TRACKER_MODE` / `-D TRACKER_BASE` firmware zachowuje się jak oryginalny
 ## Licencja
 
 MIT, tak jak MeshCore. Oryginalna nota copyright MeshCore w [license.txt](license.txt) zostaje bez zmian;
-zmiany i nowe pliki tego forka (firmware i obudowa): Copyright (c) 2026 qbart, na tej samej licencji MIT.
+zmiany i nowe pliki tego forka (firmware, do 2026-11-15 także obudowa): Copyright (c) 2026 qbart, na tej samej licencji MIT.
 To nieoficjalny fork – nie jest wydawany ani wspierany przez zespół MeshCore.
