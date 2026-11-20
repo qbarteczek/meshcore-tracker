@@ -18,11 +18,19 @@ extern MyMesh the_mesh;
 
 #define TRK_CONFIG_FILE        "/tracker"
 #define TRK_MAGIC_V1           0x4B525431   // "1TRK": trk1-trk5 (DM to a base), only "enabled" is taken over
-#define TRK_MAGIC              0x4B525432   // "2TRK": channel version
+#define TRK_MAGIC_V2           0x4B525432   // "2TRK": trk6-trk7, everything but nap/beat is taken over
+#define TRK_MAGIC              0x4B525433   // "3TRK": trk8
 #define TRK_DEFAULT_CHANNEL    "Pies"
-#define TRK_DEFAULT_MOVE_S     60           // chosen by simulation: 30 s = 2x airtime, ~same result
+#define TRK_DEFAULT_MOVE_S     30           // walk; 2 copies of ~1.2 s every 30 s = 8 % airtime
 #define TRK_DEFAULT_STILL_S    300
-#define TRK_DEFAULT_FAST_S     30           // 2 copies of ~1.2 s every 30 s = 8 % duty cycle (limit 10 %)
+#define TRK_DEFAULT_FAST_S     20           // run; 12 %: fine for runs, the airtime guard stretches longer ones
+#define TRK_OLD_MOVE_S         60           // trk7 defaults: a 2TRK file still holding them gets the new ones
+#define TRK_OLD_FAST_S         30
+#define TRK_DEFAULT_NAP_MIN    60           // still this long -> asleep until the accelerometer feels motion
+#define TRK_DEFAULT_BEAT_MIN   120          // heartbeat while asleep
+#define TRK_AIR_WINDOW_MS      3600000UL    // EU 869.4-869.65 MHz: 10 % per hour
+#define TRK_AIR_LIMIT_MS       306000UL     // 85 % of the 360 s allowed: stretch the interval above this
+#define TRK_AIR_SAFE_S         30           // 2 copies every 30 s = 8 %, sustainable
 #define TRK_FAST_KMH_X10       70           // faster than this (GPS) = fast
 #define TRK_FAST_END_KMH_X10   50           // slower than this = no longer fast
 #define TRK_ACC_WAKE_GAP_S     60           // at most one early wake-up by the accelerometer per this time
@@ -64,13 +72,23 @@ void TrackerMode::loadConfig() {
   _cfg.still_s = TRK_DEFAULT_STILL_S;
   _cfg.fast_s = TRK_DEFAULT_FAST_S;
   _cfg.accel = 1;
+  _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
+  _cfg.beat_min = TRK_DEFAULT_BEAT_MIN;
   strcpy(_cfg.channel, TRK_DEFAULT_CHANNEL);
 #if defined(NRF52_PLATFORM)
   File f(InternalFS);
   if (f.open(TRK_CONFIG_FILE, FILE_O_READ)) {
     Config c = _cfg;   // a file written by trk6 is shorter: the new fields keep their defaults
     int n = f.read((uint8_t*)&c, sizeof(c));
-    if (n >= (int)offsetof(Config, fast_s) && c.magic == TRK_MAGIC) _cfg = c;
+    if (n >= (int)sizeof(Config) && c.magic == TRK_MAGIC) _cfg = c;
+    else if (n >= (int)offsetof(Config, fast_s) && c.magic == TRK_MAGIC_V2) {
+      _cfg = c;          // trk6/trk7: nap/beat are new, the old default intervals become the new ones
+      _cfg.magic = TRK_MAGIC;
+      _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
+      _cfg.beat_min = TRK_DEFAULT_BEAT_MIN;
+      if (_cfg.move_s == TRK_OLD_MOVE_S) _cfg.move_s = TRK_DEFAULT_MOVE_S;
+      if (_cfg.fast_s == TRK_OLD_FAST_S) _cfg.fast_s = TRK_DEFAULT_FAST_S;
+    }
     else if (n >= 5 && c.magic == TRK_MAGIC_V1) _cfg.enabled = c.enabled;   // old version: keep "tracker on"
     f.close();
   }
@@ -82,6 +100,8 @@ void TrackerMode::loadConfig() {
   if (_cfg.fast_s == 0) _cfg.fast_s = TRK_DEFAULT_FAST_S;   // padding of a trk6 file
   _cfg.fast_s = constrain(_cfg.fast_s, TRK_MIN_INTERVAL, TRK_MAX_INTERVAL);
   _cfg.accel = _cfg.accel ? 1 : 0;
+  if (_cfg.nap_min > 1440) _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
+  _cfg.beat_min = constrain(_cfg.beat_min, 15, 1440);
 }
 
 void TrackerMode::saveConfig() {
@@ -126,6 +146,10 @@ bool TrackerMode::setSetting(const char* name, const char* value) {
   } else if (strcmp(name, "trk_acc") == 0) {
     _cfg.accel = (value[0] == '1') ? 1 : 0;
     if (!_cfg.accel) _accel.off();
+  } else if (strcmp(name, "trk_nap") == 0) {     // minutes, 0 = never nap
+    _cfg.nap_min = constrain(atoi(value), 0, 1440);
+  } else if (strcmp(name, "trk_beat") == 0) {
+    _cfg.beat_min = constrain(atoi(value), 15, 1440);
   } else {
     return false;
   }
@@ -139,8 +163,10 @@ int TrackerMode::formatSettings(char* dest, int max_len) {
     char* dp = path;
     for (int i = 0; i < _cfg.path_len; i++) dp += sprintf(dp, "%02x", _cfg.path[i]);
   }
-  return snprintf(dest, max_len, ",tracker:%u,trk_ch:%s,trk_path:%s,trk_move:%u,trk_still:%u,trk_fast:%u,trk_acc:%u",
-                  _cfg.enabled, _cfg.channel, path, _cfg.move_s, _cfg.still_s, _cfg.fast_s, _cfg.accel);
+  return snprintf(dest, max_len, ",tracker:%u,trk_ch:%s,trk_path:%s,trk_move:%u,trk_still:%u,trk_fast:%u,trk_acc:%u"
+                  ",trk_nap:%u,trk_beat:%u",
+                  _cfg.enabled, _cfg.channel, path, _cfg.move_s, _cfg.still_s, _cfg.fast_s, _cfg.accel,
+                  _cfg.nap_min, _cfg.beat_min);
 }
 
 // ------------------------------------------------------------------ mode switching
@@ -160,6 +186,8 @@ void TrackerMode::enterTracker() {
   if (_ble) _ble->disable();
   if (_cfg.accel && !_accel.ok()) _accel.begin();
   _accel_wake_ok = millis() + TRK_ACC_WAKE_GAP_S * 1000UL;
+  _last_move = millis();      // the nap counts from here
+  _asleep = false;
   _next_wake = millis();      // report right away
   _state = ST_SLEEP;
 }
@@ -279,6 +307,22 @@ void TrackerMode::updateMotion() {
   }
 }
 
+// own airtime per report cycle, kept for an hour (the mesh's own budget depends on the "af" preference)
+void TrackerMode::logAirtime() {
+  unsigned long ms = the_mesh.getTotalAirTime() - _air_before;
+  _air_t[_air_head] = millis();
+  _air_ms[_air_head] = ms > 65535UL ? 65535 : (uint16_t)ms;
+  _air_head = (_air_head + 1) % AIR_LOG;
+}
+
+unsigned long TrackerMode::airtimeLastHour() {
+  unsigned long sum = 0;
+  for (int i = 0; i < AIR_LOG; i++) {
+    if (_air_ms[i] && millis() - _air_t[i] < TRK_AIR_WINDOW_MS) sum += _air_ms[i];
+  }
+  return sum;
+}
+
 // ------------------------------------------------------------------ report cycle
 
 void TrackerMode::startCycle() {
@@ -299,6 +343,7 @@ void TrackerMode::composeReport() {
   if (_sos_until) dp += sprintf(dp, "SOS");
   else if (_ok_pending) dp += sprintf(dp, "OK");
   else if (_boot_report) dp += sprintf(dp, "start");
+  else if (_asleep) dp += sprintf(dp, "\xC5\x9B" "pi");   // śpi
   else if (!_fix) dp += sprintf(dp, "brak GPS");
   else dp += sprintf(dp, _moving ? "idzie" : "stoi");
   dp += sprintf(dp, " %d%% ", trkBattPct(mv));
@@ -362,12 +407,15 @@ void TrackerMode::finishCycle() {
   }
   if (!_moving) _fast = false;
   uint32_t iv = _moving ? (_fast ? _cfg.fast_s : _cfg.move_s) : _cfg.still_s;
+  if (_asleep) iv = (uint32_t)_cfg.beat_min * 60;
   _accel.resetStats();
   if (_sos_until) {
     if (timeReached(_sos_until)) _sos_until = 0;
     else iv = TRK_SOS_INTERVAL;
   }
   if (_batt_warned == 2 && !_sos_until && iv < TRK_CRIT_INTERVAL) iv = TRK_CRIT_INTERVAL;
+  logAirtime();
+  if (iv < TRK_AIR_SAFE_S && airtimeLastHour() > TRK_AIR_LIMIT_MS) iv = TRK_AIR_SAFE_S;
   _interval_s = iv;
   if (_interval_s > TRK_KEEP_GPS_INTERVAL) gpsPower(false);
   _next_wake = _cycle_start + _interval_s * 1000UL;
@@ -402,6 +450,11 @@ bool TrackerMode::loop() {
           && (long)(_next_wake - millis()) > 10000L) {
         _accel_wake_ok = millis() + TRK_ACC_WAKE_GAP_S * 1000UL;
         _next_wake = millis();
+        if (_asleep) {             // woken from a nap: treat as walking until the GPS says otherwise
+          _asleep = false;
+          _moving = true;
+          _last_move = millis();
+        }
       }
       if (timeReached(_next_wake)) {
         startCycle();
@@ -432,12 +485,15 @@ bool TrackerMode::loop() {
       }
       if (_fix || timeReached(_deadline)) {
         updateMotion();
+        if (_moving) _asleep = false;
+        else if (_cfg.nap_min && millis() - _last_move >= (unsigned long)_cfg.nap_min * 60000UL) _asleep = true;
         radio_driver.wakeRadio();
         _radio_asleep = false;
         _seq++;
         rtc_clock.tick();
         composeReport();
         _sent_before = the_mesh.getNumSentDirect();
+        _air_before = the_mesh.getTotalAirTime();
         _to_send = sendReport();
         _boot_report = _ok_pending = false;
         _send_done = millis();

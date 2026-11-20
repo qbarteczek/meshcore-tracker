@@ -13,15 +13,16 @@ Strona projektu: <https://qbart.waw.pl>. Aplikacja na telefon: [TrackDog](https:
 
 **Aktualizacje:** wraz z kolejnymi wydaniami MeshCore będą tu publikowane zaktualizowane wersje firmware
 trackera – zmiany tego forka są przenoszone na nową wersję MeshCore, budowane i udostępniane w
-[release/](release/). Nazwa pliku podaje obie wersje: `t1000e_tracker-v1.18.0-trk7` = MeshCore 1.18.0 +
-7. wersja trybu trackera. Pozostałe urządzenia (radio przy sobie, repeater, węzeł w domu) używają oryginalnego
+[release/](release/). Nazwa pliku podaje obie wersje: `t1000e_tracker-v1.18.0-trk8` = MeshCore 1.18.0 +
+8. wersja trybu trackera. Pozostałe urządzenia (radio przy sobie, repeater, węzeł w domu) używają oryginalnego
 firmware MeshCore.
 
 *English summary:* the stock companion keeps the LoRa receiver, GPS and Bluetooth on all the time
 (~15–20 mA, about 1.5 days on the T1000-E's 700 mAh battery). In tracker mode the node sleeps (radio in warm
 sleep, GPS in RTC backup, Bluetooth off), wakes up, gets a fresh fix and posts one text message to a private
-group channel – every minute while moving, every 5 minutes while still (decided by the tracker alone, with
-hysteresis against GPS noise). The same packet is sent twice: first over a fixed route through one repeater
+group channel – every 30 s while walking, every 20 s while running, every 5 minutes while still (decided by
+the tracker alone, with hysteresis against GPS noise). After an hour without movement it naps (GPS off, one
+heartbeat every 2 h) until the accelerometer feels motion (trk8). The same packet is sent twice: first over a fixed route through one repeater
 (the home node hears it, the mesh is not flooded), then zero-hop (a companion carried by the walker hears it
 directly). No ACKs, no bases, no modes and no remote commands – any node with the channel key that hears the
 packet shows it, e.g. the official MeshCore app. Version 2 (trk6) replaced the older direct-message design
@@ -61,20 +62,29 @@ przerwy w domu i w telefonie, ~2,3× mniej eteru niż flood.
    ```
    TRK1: idzie 93% 4,18V 9,3°C 12sat nr81 https://maps.google.com/?q=52.22970,21.01220
    ```
-   Pierwsze słowo: `start` (po włączeniu), `idzie`, `stoi`, `OK`, `SOS`, `brak GPS` (link = ostatnia znana
-   pozycja, przed nim „ost.”). `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
+   Pierwsze słowo: `start` (po włączeniu), `idzie`, `stoi`, `śpi` (od trk8, zob. pkt 7), `OK`, `SOS`, `brak GPS`
+   (link = ostatnia znana pozycja, przed nim „ost.”). `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
    ile meldunków nie doszło. Od **trk7** meldunek ma też prędkość i kurs z GPS oraz aktywność z akcelerometru:
    `… 12sat 5,4km/h k270 a12 nr81 …` (kurs tylko powyżej 2 km/h; `a` = 0–99, średnia zmiana przyspieszenia).
 4. **Dwie kopie**: najpierw po trasie `trk_path` (repeater przekazuje ją raz, dalej nie idzie), po 3 s zero-hop.
    Kolejność jest ważna: repeater, który już usłyszał kopię zero-hop, uznałby drugą za powtórkę i jej nie
    przekazał. Odbiorniki widzą jedną wiadomość (ta sama treść = ten sam skrót pakietu).
-5. **Odstęp** – decyduje tracker: oddalił się > 40 m od punktu odniesienia → *idzie*, co `trk_move` (60 s);
-   3 min bez takiego przesunięcia → *stoi*, co `trk_still` (300 s). Bez poleceń z zewnątrz.
-   Od **trk7**: prędkość z GPS powyżej 7 km/h → co `trk_fast` (30 s; wraca poniżej 5 km/h). Krócej się nie da:
-   dwie kopie to ~2,4 s nadawania, a limit w tym paśmie to 10 % czasu.
+5. **Odstęp** – decyduje tracker: oddalił się > 40 m od punktu odniesienia → *idzie* (spacer), co `trk_move`
+   (od trk8 30 s, wcześniej 60 s); 3 min bez takiego przesunięcia → *stoi*, co `trk_still` (300 s).
+   Prędkość z GPS powyżej 7 km/h → *bieg*, co `trk_fast` (od trk8 20 s, wcześniej 30 s; wraca poniżej 5 km/h).
+   Bez poleceń z zewnątrz.
+   **Limit nadawania (trk8):** pasmo 869,4–869,65 MHz pozwala nadawać 10 % czasu w ciągu godziny (6 min).
+   Dwie kopie meldunku to ~2,4 s: co 30 s = 8 %, co 20 s = 12 %. Tracker liczy własny czas nadawania z ostatniej
+   godziny; powyżej 85 % limitu wydłuża krótsze odstępy do 30 s, aż stare nadawanie wypadnie z okna godziny.
+   Przy zwykłych zrywach psa nie zadziała; chroni przed długim biegiem co 20 s.
 6. **Akcelerometr** (trk7, QMA6100P w T1000-E, 4 odczyty na sekundę): gdy tracker *stoi* i poczuje ≥ 2 s
    ciągłego ruchu, melduje od razu (najwyżej raz na minutę), zamiast czekać do końca 5 minut. Nigdy nie wydłuża
    odstępu – bez czujnika albo z `trk_acc=0` tracker działa jak trk6.
+7. **Sen** (trk8): po `trk_nap` minutach bez ruchu (domyślnie 60) tracker wysyła meldunek `śpi`, wyłącza GPS
+   i melduje tylko co `trk_beat` minut (domyślnie 120, też `śpi`, z pozycją) – widać, że żyje i gdzie leży.
+   Budzi go ≥ 2 s ciągłego ruchu (akcelerometr) albo przycisk; po pobudce melduje od razu i przez 3 min traktuje
+   się jak *idzie* (co 30 s), potem decyduje GPS. Bez akcelerometru (`trk_acc=0`) budzi go tylko przycisk
+   i meldunek kontrolny – wtedy warto ustawić `trk_nap=0` (bez snu).
 
 ### Przycisk
 
@@ -101,10 +111,12 @@ i meldunek najwyżej co 10 min (poza SOS). Ostrzeżenia wracają po naładowaniu
 | `tracker` | `1` – tryb trackera włączony, `0` – zwykły companion |
 | `trk_ch` | nazwa kanału na trackerze (domyślnie `Pies`) |
 | `trk_path` | trasa pierwszej kopii: skróty repeaterów w hex, np. `a1` (1 bajt na repeater); `-` = tylko zero-hop |
-| `trk_move` | odstęp w ruchu, s (domyślnie 60) |
+| `trk_move` | odstęp na spacerze, s (domyślnie 30, do trk7: 60) |
 | `trk_still` | odstęp w postoju, s (domyślnie 300) |
-| `trk_fast` | odstęp powyżej 7 km/h, s (domyślnie 30) – od trk7 |
+| `trk_fast` | odstęp w biegu, powyżej 7 km/h, s (domyślnie 20, w trk7: 30) – od trk7 |
 | `trk_acc` | `1` – akcelerometr budzi tracker z postoju i liczy aktywność (domyślnie), `0` – wyłączony – od trk7 |
+| `trk_nap` | minuty bez ruchu do snu (domyślnie 60, `0` = nigdy) – od trk8 |
+| `trk_beat` | meldunek kontrolny w czasie snu, min (domyślnie 120, 15–1440) – od trk8 |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
 Kanał (nazwa + 16-bajtowy sekret) trzeba dodać na trackerze i na każdym odbiorniku. Sekret jest kluczem –
@@ -145,7 +157,8 @@ python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o 
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
-**trk7 działa na urządzeniu (meldunki z prędkością i aktywnością), ale nie było jeszcze na spacerze** – sprawdzona na spacerach jest trk6.
+**trk8 jest zbudowana, ale nie była jeszcze wgrana na urządzenie; trk7 działa na urządzeniu, ale nie była na spacerze** – sprawdzona na spacerach jest trk6.
+Przy aktualizacji z trk6/trk7 ustawienia zostają; jeśli `trk_move`/`trk_fast` miały stare wartości domyślne (60/30), zmieniają się na nowe (30/20).
 Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`).
 Klucze, kontakty i kanały zostają przy aktualizacji. Z wersji 1 przechodzi tylko `tracker=1`; kanał i `trk_path`
 trzeba ustawić.

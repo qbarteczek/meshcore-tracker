@@ -7,8 +7,8 @@
  * post one text message to a private group channel (default "Pies", set with trk_ch):
  *     "<status> 93% 4,18V 9,3°C 12sat 5,4km/h k270 a12 nr81 https://maps.google.com/?q=52.22970,21.01220"
  *   5,4km/h k270 = GPS speed and course (only with a fix), a12 = activity from the accelerometer (0..99)
- *   status: start (first after power-on), idzie (moving), stoi (still), OK (2 presses), SOS (3 presses),
- *           brak GPS (no fix: the link is the last known position, marked "ost.")
+ *   status: start (first after power-on), idzie (moving), stoi (still), śpi (asleep, see below), OK (2 presses),
+ *           SOS (3 presses), brak GPS (no fix: the link is the last known position, marked "ost.")
  * No ACKs, no bases, no modes, no commands: whoever has the channel and hears the packet shows it.
  * The same packet goes out twice:
  *   1. over a fixed route (trk_path, e.g. the hash of the roof repeater): the repeater passes it on once,
@@ -21,13 +21,17 @@
  * moving faster than TRK_FAST_KMH -> fast_s, still for TRK_STILL_AFTER_S -> still_s.
  * The accelerometer (T1000-E) ends a "still" sleep early when the tracker starts to move; it never
  * lengthens an interval. SOS: every TRK_SOS_INTERVAL for TRK_SOS_SECS (3 presses again = end).
+ * Nap (trk8): still for nap_min minutes -> report "śpi", GPS off, only a "śpi" heartbeat every beat_min
+ * minutes until the accelerometer feels sustained motion (or a button press).
+ * Airtime (trk8): the EU 869.4-869.65 MHz sub-band allows 10 % per hour; when the tracker's own airtime in the
+ * last hour nears that, the interval is stretched to TRK_AIR_SAFE_S (2 copies every 30 s = 8 %).
  *
  * Button: 1 press = report now; 2 = "OK"; 3 = SOS / end of SOS; hold 2-6 s = Bluetooth configuration window
  * (10 min, normal companion, MeshCore app works); hold > 6 s = power off. After boot the window is open for
  * TRK_BOOT_CONFIG_SECS.
  *
  * Custom vars: tracker=0|1, trk_ch=<channel name>, trk_path=<hex hashes of the route, "-" = none>,
- * trk_move=<s>, trk_still=<s>, trk_fast=<s>, trk_acc=0|1.
+ * trk_move=<s>, trk_still=<s>, trk_fast=<s>, trk_acc=0|1, trk_nap=<min, 0 = never>, trk_beat=<min>.
  */
 
 #include <Arduino.h>
@@ -59,6 +63,9 @@ private:
     // added in trk7 (older files are shorter: defaults apply)
     uint16_t fast_s;       // interval above TRK_FAST_KMH
     uint8_t accel;         // 1 = use the accelerometer
+    // added in trk8 (magic 3TRK; a 2TRK file gets the defaults)
+    uint16_t nap_min;      // still this long -> asleep until motion; 0 = never
+    uint16_t beat_min;     // heartbeat while asleep
   };
 
   BaseSerialInterface* _ble = NULL;
@@ -89,6 +96,14 @@ private:
   long _speed_x10 = -1;            // km/h * 10 from GPS, -1 = unknown
   int _course = -1;                // degrees, -1 = unknown
   bool _fast = false;
+  bool _asleep = false;            // nap: still for nap_min, waiting for motion
+
+  // own airtime in the last hour (EU sub-band: 10 %)
+  static const int AIR_LOG = 192;  // > reports per hour at the shortest interval
+  unsigned long _air_t[AIR_LOG] = {};
+  uint16_t _air_ms[AIR_LOG] = {};
+  uint8_t _air_head = 0;
+  unsigned long _air_before = 0;
 
   // accelerometer
   TrackerAccel _accel;
@@ -109,4 +124,6 @@ private:
   void buzz(int n, int ms);
   void checkBattery();
   void runMesh();
+  void logAirtime();
+  unsigned long airtimeLastHour();
 };
