@@ -7,6 +7,8 @@
  * post one text message to a private group channel (default "Pies", set with trk_ch):
  *     "<status> 93% 4,18V 9,3°C 12sat 5,4km/h k270 a12 nr81 https://maps.google.com/?q=52.22970,21.01220"
  *   5,4km/h k270 = GPS speed and course (only with a fix), a12 = activity from the accelerometer (0..99)
+ *   93% 4,18V 9,3°C 12sat = telemetry: from trk9 only in every 10th report (nr 1, 11, 21, ...) and in start,
+ *   OK, SOS, śpi and low-battery reports; the others are shorter (less airtime)
  *   status: start (first after power-on), idzie (moving), stoi (still), śpi (asleep, see below), OK (2 presses),
  *           SOS (3 presses), brak GPS (no fix: the link is the last known position, marked "ost.")
  * No ACKs, no bases, no modes, no commands: whoever has the channel and hears the packet shows it.
@@ -31,12 +33,16 @@
  * TRK_BOOT_CONFIG_SECS.
  *
  * Custom vars: tracker=0|1, trk_ch=<channel name>, trk_path=<hex hashes of the route, "-" = none>,
- * trk_move=<s>, trk_still=<s>, trk_fast=<s>, trk_acc=0|1, trk_nap=<min, 0 = never>, trk_beat=<min>.
+ * trk_move=<s>, trk_still=<s>, trk_fast=<s>, trk_acc=0|1, trk_nap=<min, 0 = never>, trk_beat=<min>,
+ * trk_idle=<min, 0 = off>, trk_home=<lat lon | "-">, trk_home_r=<m>.
+ * trk10: "hdop1,2" (with a fix), posture "pion"/"bok"/"grzbiet" and "bz23" (minutes without motion) in every
+ * report; alarm reports "uderzenie" / "upadek" (accelerometer) and "bezruch" (still away from home).
  */
 
 #include <Arduino.h>
 #include <helpers/ContactInfo.h>
 #include <helpers/BaseSerialInterface.h>
+#include <helpers/BaseChatMesh.h>   // MAX_TEXT_LEN
 #include "TrackerHooks.h"
 #include "TrackerAccel.h"
 
@@ -66,6 +72,10 @@ private:
     // added in trk8 (magic 3TRK; a 2TRK file gets the defaults)
     uint16_t nap_min;      // still this long -> asleep until motion; 0 = never
     uint16_t beat_min;     // heartbeat while asleep
+    // added in trk10 (magic 4TRK; older files get the defaults)
+    uint16_t idle_min;     // no motion this long away from home -> "bezruch" alarm; 0 = off
+    uint16_t home_r;       // m, radius of home
+    int32_t home_lat, home_lon;   // microdegrees; both 0 = home not set (then no "bezruch" alarm)
   };
 
   BaseSerialInterface* _ble = NULL;
@@ -86,7 +96,7 @@ private:
   uint8_t _taps = 0;
   unsigned long _last_tap = 0, _btn_down = 0;
   uint32_t _seq = 0;
-  char _msg[160];
+  char _msg[MAX_TEXT_LEN + 8];
 
   // position
   bool _fix = false, _have_pos = false, _moving = true;
@@ -97,6 +107,9 @@ private:
   int _course = -1;                // degrees, -1 = unknown
   bool _fast = false;
   bool _asleep = false;            // nap: still for nap_min, waiting for motion
+  int _hdop_x10 = -1;              // of the last fix
+  TrkImpact _impact = TRK_IMP_NONE;   // alarm waiting to be reported
+  bool _idle_pending = false, _idle_sent = false;
 
   // own airtime in the last hour (EU sub-band: 10 %)
   static const int AIR_LOG = 192;  // > reports per hour at the shortest interval
@@ -124,6 +137,9 @@ private:
   void buzz(int n, int ms);
   void checkBattery();
   void runMesh();
+  void checkAlarms();
+  bool homeSet() const { return _cfg.home_lat || _cfg.home_lon; }
+  bool awayFromHome();
   void logAirtime();
   unsigned long airtimeLastHour();
 };

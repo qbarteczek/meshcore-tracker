@@ -3,23 +3,19 @@
 /*
  * Motion sensing for tracker mode: QMA6100P accelerometer of the T1000-E (I2C, polled).
  *
- * Used for two things only:
- *   - waking the tracker early when it starts moving after standing still,
- *   - an activity figure (0..99) in the report, to tell walking from running or resting.
+ * Reads the sensor every TRK_MOT_SAMPLE_MS and hands the samples to TrackerMotion (TrackerMotion.h):
+ * motion and activity (trk7), impact / fall, time without motion and posture (trk10).
  * It never makes the tracker report less often, so a dead or stuck sensor cannot hide a moving dog:
  * without the sensor (or with trk_acc=0) the tracker behaves exactly as before (GPS only).
  */
 
 #include <Arduino.h>
+#include "TrackerMotion.h"
 
 #if defined(TRACKER_MODE) && defined(HAS_QMA6100P)
 
 #include <Wire.h>
 
-#define TRK_ACC_SAMPLE_MS     250UL   // 4 Hz
-#define TRK_ACC_MOTION_MG     70      // change between two samples (sum of 3 axes) that counts as motion
-#define TRK_ACC_RUN_MAX       16
-#define TRK_ACC_RUN_SUSTAINED 8       // net 2 s of motion = "moving now"
 
 class TrackerAccel {
 public:
@@ -48,9 +44,7 @@ public:
     wr(0x5F, 0x00); delay(10);
     wr(0x0F, 0x02);               // +-4 g: 0.488 mg per LSB (14 bit)
     wr(0x11, 0x84);
-    _have_prev = false;
-    _run = 0;
-    resetStats();
+    _m.reset(millis());
     _next = millis();
     return true;
   }
@@ -67,7 +61,7 @@ public:
   // call as often as you like; reads the sensor every TRK_ACC_SAMPLE_MS
   void poll() {
     if (!_ok || (long)(millis() - _next) < 0) return;
-    _next = millis() + TRK_ACC_SAMPLE_MS;
+    _next = millis() + TRK_MOT_SAMPLE_MS;
     uint8_t b[6];
     if (!rd(0x01, b, 6)) {
       if (++_errors > 20) off();   // sensor gone: stop trying
@@ -76,37 +70,21 @@ public:
     _errors = 0;
     int16_t v[3];
     for (int i = 0; i < 3; i++) v[i] = ((int16_t)((b[2 * i + 1] << 8) | b[2 * i])) >> 2;
-    if (_have_prev) {
-      long d = 0;
-      for (int i = 0; i < 3; i++) d += abs(v[i] - _prev[i]);
-      d = d / 2;                    // LSB -> mg (0.488)
-      _sum += d;
-      _n++;
-      if (d > TRK_ACC_MOTION_MG) { if (_run < TRK_ACC_RUN_MAX) _run++; }
-      else if (_run > 0) _run--;
-    }
-    for (int i = 0; i < 3; i++) _prev[i] = v[i];
-    _have_prev = true;
+    _m.feed(v[0] / 2, v[1] / 2, v[2] / 2, millis());   // LSB -> mg (0.488)
   }
 
-  bool movingNow() const { return _ok && _run >= TRK_ACC_RUN_SUSTAINED; }
-
-  // mean change between samples since resetStats(), in units of 10 mg, 0..99 (-1 = no data)
-  int activity() const {
-    if (!_ok || _n == 0) return -1;
-    long a = _sum / (long)_n / 10;
-    return a > 99 ? 99 : (int)a;
-  }
-
-  void resetStats() { _sum = 0; _n = 0; }
+  bool movingNow() const { return _ok && _m.movingNow(); }
+  int activity() const { return _ok ? _m.activity() : -1; }
+  void resetStats() { _m.resetStats(); }
+  unsigned long stillMs() const { return _ok ? _m.stillMs(millis()) : 0; }
+  TrkImpact takeImpact() { return _ok ? _m.takeImpact() : TRK_IMP_NONE; }
+  TrkPosture posture() const { return _ok ? _m.posture() : TRK_POS_UNKNOWN; }
 
 private:
-  bool _ok = false, _have_prev = false;
-  uint8_t _addr = 0x12, _run = 0, _errors = 0;
-  int16_t _prev[3] = {0, 0, 0};
+  bool _ok = false;
+  uint8_t _addr = 0x12, _errors = 0;
   unsigned long _next = 0;
-  long _sum = 0;
-  uint32_t _n = 0;
+  TrackerMotion _m;
 
   bool wr(uint8_t reg, uint8_t val) {
     Wire.beginTransmission(_addr);
@@ -136,6 +114,9 @@ public:
   bool movingNow() const { return false; }
   int activity() const { return -1; }
   void resetStats() { }
+  unsigned long stillMs() const { return 0; }
+  TrkImpact takeImpact() { return TRK_IMP_NONE; }
+  TrkPosture posture() const { return TRK_POS_UNKNOWN; }
 };
 
 #endif

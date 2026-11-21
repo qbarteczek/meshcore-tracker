@@ -13,8 +13,8 @@ Strona projektu: <https://qbart.waw.pl>. Aplikacja na telefon: [TrackDog](https:
 
 **Aktualizacje:** wraz z kolejnymi wydaniami MeshCore będą tu publikowane zaktualizowane wersje firmware
 trackera – zmiany tego forka są przenoszone na nową wersję MeshCore, budowane i udostępniane w
-[release/](release/). Nazwa pliku podaje obie wersje: `t1000e_tracker-v1.18.0-trk8` = MeshCore 1.18.0 +
-8. wersja trybu trackera. Pozostałe urządzenia (radio przy sobie, repeater, węzeł w domu) używają oryginalnego
+[release/](release/). Nazwa pliku podaje obie wersje: `t1000e_tracker-v1.18.0-trk10` = MeshCore 1.18.0 +
+10. wersja trybu trackera. Pozostałe urządzenia (radio przy sobie, repeater, węzeł w domu) używają oryginalnego
 firmware MeshCore.
 
 *English summary:* the stock companion keeps the LoRa receiver, GPS and Bluetooth on all the time
@@ -63,7 +63,17 @@ przerwy w domu i w telefonie, ~2,3× mniej eteru niż flood.
    TRK1: idzie 93% 4,18V 9,3°C 12sat nr81 https://maps.google.com/?q=52.22970,21.01220
    ```
    Pierwsze słowo: `start` (po włączeniu), `idzie`, `stoi`, `śpi` (od trk8, zob. pkt 7), `OK`, `SOS`, `brak GPS`
-   (link = ostatnia znana pozycja, przed nim „ost.”). `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
+   (link = ostatnia znana pozycja, przed nim „ost.”), od trk10 alarmy `uderzenie`, `upadek`, `bezruch` (pkt 8).
+   **Od trk9** bateria, napięcie, temperatura i satelity są tylko w co dziesiątym meldunku (nr 1, 11, 21…) oraz
+   w meldunkach start, OK, SOS, śpi, alarmach i przy słabej baterii – pozostałe są krótsze (mniej czasu nadawania).
+   Pozycja jest w każdym meldunku. **Od trk10** w każdym meldunku także `hdop1,2` (dokładność pozycji z GPS),
+   położenie `pion` / `bok` / `grzbiet` i `bz23` (minuty bez ruchu wg akcelerometru, od 1 min), np.:
+
+   ```
+   TRK1: stoi 0,0km/h a1 hdop1,4 bok bz23 nr90 https://maps.google.com/?q=52.22970,21.01220
+   ```
+   Meldunek mieści się zawsze w jednej wiadomości: numer i pozycja są składane najpierw, a słowa dodatkowe
+   pomijane, gdyby tekst był za długi. `bateria!` przy ≤ 10 %. `nr` rośnie z każdym meldunkiem – po przeskokach widać,
    ile meldunków nie doszło. Od **trk7** meldunek ma też prędkość i kurs z GPS oraz aktywność z akcelerometru:
    `… 12sat 5,4km/h k270 a12 nr81 …` (kurs tylko powyżej 2 km/h; `a` = 0–99, średnia zmiana przyspieszenia).
 4. **Dwie kopie**: najpierw po trasie `trk_path` (repeater przekazuje ją raz, dalej nie idzie), po 3 s zero-hop.
@@ -84,7 +94,19 @@ przerwy w domu i w telefonie, ~2,3× mniej eteru niż flood.
    i melduje tylko co `trk_beat` minut (domyślnie 120, też `śpi`, z pozycją) – widać, że żyje i gdzie leży.
    Budzi go ≥ 2 s ciągłego ruchu (akcelerometr) albo przycisk; po pobudce melduje od razu i przez 3 min traktuje
    się jak *idzie* (co 30 s), potem decyduje GPS. Bez akcelerometru (`trk_acc=0`) budzi go tylko przycisk
-   i meldunek kontrolny – wtedy warto ustawić `trk_nap=0` (bez snu).
+   i meldunek kontrolny – wtedy warto ustawić `trk_nap=0` (bez snu). Od trk10 tracker zasypia tylko w domu
+   (gdy dom jest ustawiony, `trk_home`): poza domem nieruchomy pies może potrzebować pomocy.
+8. **Alarmy z akcelerometru** (trk10, próbkowanie 20 razy na sekundę):
+   - `uderzenie` – szarpnięcie powyżej ~3,2 g, po którym pies przez 30 s się nie rusza; `upadek` – to samo, gdy tuż
+     przed uderzeniem był swobodny spadek (~0,15 s nieważkości). Lądowanie po skoku, po którym pies biegnie dalej,
+     nie daje alarmu. Najwyżej jeden taki alarm na 10 min.
+   - `bezruch` – brak ruchu przez `trk_idle` minut (domyślnie 15) dalej niż `trk_home_r` (150 m) od domu
+     (`trk_home`; bez ustawionego domu ten alarm nie działa).
+   - Alarm idzie od razu, z pełną telemetrią i pozycją (GPS do 45 s).
+   - **Położenie** liczone jest z kierunku grawitacji względem tego, jak tracker wisi, gdy pies idzie (uczy się tego
+     sam na pierwszym spacerze po włączeniu; przedtem położenia nie ma w meldunku). `bok` = leży na boku,
+     `grzbiet` = na grzbiecie, `pion` = stoi **albo leży na brzuchu** – tych dwóch z kamizelki nie da się odróżnić.
+   - Logika ruchu jest w `TrackerMotion.h` i ma testy na komputerze: `test/tracker_motion/test_motion.cpp`.
 
 ### Przycisk
 
@@ -117,6 +139,9 @@ i meldunek najwyżej co 10 min (poza SOS). Ostrzeżenia wracają po naładowaniu
 | `trk_acc` | `1` – akcelerometr budzi tracker z postoju i liczy aktywność (domyślnie), `0` – wyłączony – od trk7 |
 | `trk_nap` | minuty bez ruchu do snu (domyślnie 60, `0` = nigdy) – od trk8 |
 | `trk_beat` | meldunek kontrolny w czasie snu, min (domyślnie 120, 15–1440) – od trk8 |
+| `trk_idle` | alarm `bezruch` po tylu minutach bez ruchu poza domem (domyślnie 15, `0` = wyłączony) – od trk10 |
+| `trk_home` | pozycja domu `szer dł` (np. `52.229700 21.012200`), `-` = brak; przy odczycie tylko `1`/`0` – od trk10. Zapisana wyłącznie w trackerze. |
+| `trk_home_r` | promień domu, m (domyślnie 150) – od trk10 |
 | `gps` | `1` – GPS używany także w oknie konfiguracji |
 
 Kanał (nazwa + 16-bajtowy sekret) trzeba dodać na trackerze i na każdym odbiorniku. Sekret jest kluczem –
@@ -157,7 +182,9 @@ python bin/uf2conv/uf2conv.py .pio/build/<env>/firmware.hex -c -f 0xADA52840 -o 
 UF2 kopiuje się na dysk bootloadera (T1000-E: dwuklik przycisku przy podłączaniu; XIAO: dwuklik RESET), albo przez
 port szeregowy: `adafruit-nrfutil dfu serial --package firmware.zip -p COMx -b 115200 --singlebank --touch 1200`
 (po „touch” bootloader pojawia się na innym porcie COM – wtedy powtórzyć z tym portem).
-**trk8 jest zbudowana, ale nie była jeszcze wgrana na urządzenie; trk7 działa na urządzeniu, ale nie była na spacerze** – sprawdzona na spacerach jest trk6.
+**trk10 jest wgrana na urządzenie, ale nie była jeszcze na spacerze**; trk7 działał na baterii bez przerw od 10 do 19.11 (300–360 meldunków na dobę).
+**Uwaga – USB:** podłączony kablem do komputera (albo ładowarki) tracker restartuje się po ok. 6 min pracy w trybie trackera i zostaje
+w bootloaderze (dotyczy też trk7). Do pracy odłącz go od USB; wgrywanie przez `adafruit-nrfutil ... --touch 1200` działa.
 Przy aktualizacji z trk6/trk7 ustawienia zostają; jeśli `trk_move`/`trk_fast` miały stare wartości domyślne (60/30), zmieniają się na nowe (30/20).
 Gotowe pliki: [release/](release/) (`.uf2` do skopiowania na dysk bootloadera, `-dfu.zip` do `adafruit-nrfutil`).
 Klucze, kontakty i kanały zostają przy aktualizacji. Z wersji 1 przechodzi tylko `tracker=1`; kanał i `trk_path`
@@ -179,13 +206,14 @@ Wcześniejsze wersje są w historii tego repozytorium (folder `obudowa/`).
 | Plik | Zmiana |
 |---|---|
 | `examples/companion_radio/TrackerMode.{h,cpp}` | tryb trackera (wersja 2: kanał) |
-| `examples/companion_radio/TrackerAccel.h` | akcelerometr QMA6100P: ruch i aktywność (trk7) |
+| `examples/companion_radio/TrackerAccel.h` | akcelerometr QMA6100P: odczyt 20 razy na sekundę (trk10; ruch i aktywność od trk7) |
+| `examples/companion_radio/TrackerMotion.h` | logika ruchu bez sprzętu: aktywność, uderzenie/upadek, bezruch, położenie (trk10), testy w `test/tracker_motion/` |
 | `examples/companion_radio/TrackerBase.{h,cpp}` | baza polowa (tylko wersja 1) |
 | `examples/companion_radio/TrackerHooks.h`, `TrackerUtil.h` | wspólny interfejs i pomocnicze funkcje |
 | `examples/companion_radio/main.cpp` | uruchomienie (tylko z `-D TRACKER_MODE` albo `-D TRACKER_BASE`) |
 | `examples/companion_radio/MyMesh.{h,cpp}` | haki: ACK, wiadomości przychodzące i z aplikacji, zmienne własne, pozycja kontaktu |
 | `src/helpers/radiolib/RadioLibWrappers.{h,cpp}` | `sleepRadio()` / `wakeRadio()` |
-| `src/helpers/sensors/LocationProvider.h`, `MicroNMEALocationProvider.h` | `lastFixMillis()` – świeżość fixu; prędkość i kurs z RMC (trk7) |
+| `src/helpers/sensors/LocationProvider.h`, `MicroNMEALocationProvider.h` | `lastFixMillis()` – świeżość fixu; prędkość i kurs z RMC (trk7); HDOP z GGA (trk10) |
 | `variants/t1000-e/platformio.ini` | `env:t1000e_tracker` |
 | `variants/xiao_nrf52/platformio.ini`, `target.cpp` | GPS na UART D6/D7, `env:Xiao_nrf52_tracker_base` |
 

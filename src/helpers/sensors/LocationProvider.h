@@ -33,6 +33,8 @@ public:
     // RMC sentence; -1 = not available
     virtual long getSpeedMilliKnots() { return -1; }
     virtual long getCourseMilliDeg() { return -1; }
+    // horizontal dilution of precision in tenths (11 = 1.1), from the last GGA sentence; -1 = not available
+    virtual int getHdopX10() { return -1; }
 
     // Format compact diagnostics in the caller-provided buffer. Providers that
     // have more information (for example UART counters) can override this.

@@ -19,7 +19,10 @@ extern MyMesh the_mesh;
 #define TRK_CONFIG_FILE        "/tracker"
 #define TRK_MAGIC_V1           0x4B525431   // "1TRK": trk1-trk5 (DM to a base), only "enabled" is taken over
 #define TRK_MAGIC_V2           0x4B525432   // "2TRK": trk6-trk7, everything but nap/beat is taken over
-#define TRK_MAGIC              0x4B525433   // "3TRK": trk8
+#define TRK_MAGIC_V3           0x4B525433   // "3TRK": trk8-trk9, everything but idle/home is taken over
+#define TRK_MAGIC              0x4B525434   // "4TRK": trk10
+#define TRK_DEFAULT_IDLE_MIN   15           // no motion this long away from home = alarm
+#define TRK_DEFAULT_HOME_R     150          // m
 #define TRK_DEFAULT_CHANNEL    "Pies"
 #define TRK_DEFAULT_MOVE_S     30           // walk; 2 copies of ~1.2 s every 30 s = 8 % airtime
 #define TRK_DEFAULT_STILL_S    300
@@ -31,6 +34,7 @@ extern MyMesh the_mesh;
 #define TRK_AIR_WINDOW_MS      3600000UL    // EU 869.4-869.65 MHz: 10 % per hour
 #define TRK_AIR_LIMIT_MS       306000UL     // 85 % of the 360 s allowed: stretch the interval above this
 #define TRK_AIR_SAFE_S         30           // 2 copies every 30 s = 8 %, sustainable
+#define TRK_TELEMETRY_EVERY    10           // battery / temperature / satellites in every 10th report (trk9)
 #define TRK_FAST_KMH_X10       70           // faster than this (GPS) = fast
 #define TRK_FAST_END_KMH_X10   50           // slower than this = no longer fast
 #define TRK_ACC_WAKE_GAP_S     60           // at most one early wake-up by the accelerometer per this time
@@ -74,6 +78,8 @@ void TrackerMode::loadConfig() {
   _cfg.accel = 1;
   _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
   _cfg.beat_min = TRK_DEFAULT_BEAT_MIN;
+  _cfg.idle_min = TRK_DEFAULT_IDLE_MIN;
+  _cfg.home_r = TRK_DEFAULT_HOME_R;
   strcpy(_cfg.channel, TRK_DEFAULT_CHANNEL);
 #if defined(NRF52_PLATFORM)
   File f(InternalFS);
@@ -81,11 +87,21 @@ void TrackerMode::loadConfig() {
     Config c = _cfg;   // a file written by trk6 is shorter: the new fields keep their defaults
     int n = f.read((uint8_t*)&c, sizeof(c));
     if (n >= (int)sizeof(Config) && c.magic == TRK_MAGIC) _cfg = c;
+    else if (n >= (int)offsetof(Config, idle_min) && c.magic == TRK_MAGIC_V3) {
+      _cfg = c;          // trk8/trk9: idle/home are new
+      _cfg.magic = TRK_MAGIC;
+      _cfg.idle_min = TRK_DEFAULT_IDLE_MIN;
+      _cfg.home_r = TRK_DEFAULT_HOME_R;
+      _cfg.home_lat = _cfg.home_lon = 0;
+    }
     else if (n >= (int)offsetof(Config, fast_s) && c.magic == TRK_MAGIC_V2) {
       _cfg = c;          // trk6/trk7: nap/beat are new, the old default intervals become the new ones
       _cfg.magic = TRK_MAGIC;
       _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
       _cfg.beat_min = TRK_DEFAULT_BEAT_MIN;
+      _cfg.idle_min = TRK_DEFAULT_IDLE_MIN;
+      _cfg.home_r = TRK_DEFAULT_HOME_R;
+      _cfg.home_lat = _cfg.home_lon = 0;
       if (_cfg.move_s == TRK_OLD_MOVE_S) _cfg.move_s = TRK_DEFAULT_MOVE_S;
       if (_cfg.fast_s == TRK_OLD_FAST_S) _cfg.fast_s = TRK_DEFAULT_FAST_S;
     }
@@ -102,6 +118,8 @@ void TrackerMode::loadConfig() {
   _cfg.accel = _cfg.accel ? 1 : 0;
   if (_cfg.nap_min > 1440) _cfg.nap_min = TRK_DEFAULT_NAP_MIN;
   _cfg.beat_min = constrain(_cfg.beat_min, 15, 1440);
+  if (_cfg.idle_min > 1440) _cfg.idle_min = TRK_DEFAULT_IDLE_MIN;
+  _cfg.home_r = constrain(_cfg.home_r, 30, 5000);
 }
 
 void TrackerMode::saveConfig() {
@@ -150,6 +168,20 @@ bool TrackerMode::setSetting(const char* name, const char* value) {
     _cfg.nap_min = constrain(atoi(value), 0, 1440);
   } else if (strcmp(name, "trk_beat") == 0) {
     _cfg.beat_min = constrain(atoi(value), 15, 1440);
+  } else if (strcmp(name, "trk_idle") == 0) {     // minutes, 0 = no "bezruch" alarm
+    _cfg.idle_min = constrain(atoi(value), 0, 1440);
+  } else if (strcmp(name, "trk_home_r") == 0) {
+    _cfg.home_r = constrain(atoi(value), 30, 5000);
+  } else if (strcmp(name, "trk_home") == 0) {     // "52.22970 21.01220" (space or ';'), "-" = forget
+    double la = 0, lo = 0;
+    const char* sep = strpbrk(value, " ;");
+    if (value[0] != '-' && sep) {
+      la = atof(value);
+      lo = atof(sep + 1);
+    }
+    if (la < -90 || la > 90 || lo < -180 || lo > 180) return false;
+    _cfg.home_lat = (int32_t)lround(la * 1e6);
+    _cfg.home_lon = (int32_t)lround(lo * 1e6);
   } else {
     return false;
   }
@@ -163,10 +195,11 @@ int TrackerMode::formatSettings(char* dest, int max_len) {
     char* dp = path;
     for (int i = 0; i < _cfg.path_len; i++) dp += sprintf(dp, "%02x", _cfg.path[i]);
   }
+  // trk_home only says whether it is set: the coordinates would not fit in the frame (and need not travel)
   return snprintf(dest, max_len, ",tracker:%u,trk_ch:%s,trk_path:%s,trk_move:%u,trk_still:%u,trk_fast:%u,trk_acc:%u"
-                  ",trk_nap:%u,trk_beat:%u",
+                  ",trk_nap:%u,trk_beat:%u,trk_idle:%u,trk_home:%u,trk_home_r:%u",
                   _cfg.enabled, _cfg.channel, path, _cfg.move_s, _cfg.still_s, _cfg.fast_s, _cfg.accel,
-                  _cfg.nap_min, _cfg.beat_min);
+                  _cfg.nap_min, _cfg.beat_min, _cfg.idle_min, homeSet() ? 1 : 0, _cfg.home_r);
 }
 
 // ------------------------------------------------------------------ mode switching
@@ -307,6 +340,31 @@ void TrackerMode::updateMotion() {
   }
 }
 
+// alarms from the accelerometer: impact / fall at once, "bezruch" when still too long away from home
+void TrackerMode::checkAlarms() {
+  TrkImpact e = _accel.takeImpact();
+  if (e != TRK_IMP_NONE && _impact == TRK_IMP_NONE) {
+    _impact = e;
+    _asleep = false;
+    _next_wake = millis();
+  }
+  unsigned long still = _accel.stillMs();
+  if (still < 60000UL) _idle_sent = false;   // it moved: the next long stillness alarms again
+  if (_cfg.idle_min && !_idle_sent && _accel.ok() && still >= (unsigned long)_cfg.idle_min * 60000UL
+      && awayFromHome()) {
+    _idle_sent = true;
+    _idle_pending = true;
+    _next_wake = millis();
+  }
+}
+
+// home set and the last known position farther than home_r from it
+bool TrackerMode::awayFromHome() {
+  if (!homeSet() || !_have_pos) return false;
+  double la = _fix ? _lat : _anchor_lat, lo = _fix ? _lon : _anchor_lon;
+  return trkDistM(la, lo, _cfg.home_lat / 1e6, _cfg.home_lon / 1e6) > _cfg.home_r;
+}
+
 // own airtime per report cycle, kept for an hour (the mesh's own budget depends on the "af" preference)
 void TrackerMode::logAirtime() {
   unsigned long ms = the_mesh.getTotalAirTime() - _air_before;
@@ -337,39 +395,73 @@ void TrackerMode::startCycle() {
   _state = ST_GPS;
 }
 
+// the report: "<status> [telemetry] <speed k a hdop posture bz> nr<n> [ost.] <link>".
+// The tail (number and position) is composed first and always fits; optional words are dropped when the text
+// would not fit in one channel message (MAX_TEXT_LEN with the "<name>: " prefix).
 void TrackerMode::composeReport() {
+  char tail[64];
+  char* tp = tail;
+  tp += sprintf(tp, " nr%lu", (unsigned long)_seq);
+  if (_have_pos) {
+    if (!_fix) tp += sprintf(tp, " ost.");
+    tp += sprintf(tp, " https://maps.google.com/?q=");
+    double la = _fix ? _lat : _anchor_lat, lo = _fix ? _lon : _anchor_lon;
+    tp = trkFmtFixed(tp, la, 5); *tp++ = ',';
+    tp = trkFmtFixed(tp, lo, 5);
+  }
+  *tp = 0;
+  const int room = MAX_TEXT_LEN - 1 - (int)strlen(the_mesh.getNodePrefs()->node_name) - 2 - (int)(tp - tail);
+
   char* dp = _msg;
-  int mv = board.getBattMilliVolts();
   if (_sos_until) dp += sprintf(dp, "SOS");
+  else if (_impact == TRK_IMP_FALL) dp += sprintf(dp, "upadek");
+  else if (_impact == TRK_IMP_IMPACT) dp += sprintf(dp, "uderzenie");
+  else if (_idle_pending) dp += sprintf(dp, "bezruch");
   else if (_ok_pending) dp += sprintf(dp, "OK");
   else if (_boot_report) dp += sprintf(dp, "start");
   else if (_asleep) dp += sprintf(dp, "\xC5\x9B" "pi");   // śpi
   else if (!_fix) dp += sprintf(dp, "brak GPS");
   else dp += sprintf(dp, _moving ? "idzie" : "stoi");
-  dp += sprintf(dp, " %d%% ", trkBattPct(mv));
-  dp = trkFmtFixed(dp, mv / 1000.0, 2, ',');
-  *dp++ = 'V';
+
+  char w[40];   // one optional word, appended only when it fits
+  auto add = [&](const char* word) {
+    int n = strlen(word);
+    if ((dp - _msg) + n <= room) { memcpy(dp, word, n); dp += n; }
+  };
+  // battery, temperature and satellites only in every TRK_TELEMETRY_EVERY-th report (shorter = less airtime),
+  // and always when they matter: start, OK, SOS, alarms, nap, low battery
+  bool telemetry = (_seq % TRK_TELEMETRY_EVERY) == 1 || _boot_report || _ok_pending || _sos_until || _asleep
+                   || _impact != TRK_IMP_NONE || _idle_pending || _batt_warned == 2;
+  if (telemetry) {
+    int mv = board.getBattMilliVolts();   // only when sent: each read switches the sensor rail on and off
+    char* q = w + sprintf(w, " %d%% ", trkBattPct(mv));
+    q = trkFmtFixed(q, mv / 1000.0, 2, ',');
+    *q++ = 'V'; *q = 0;
+    add(w);
 #if defined(T1000_E)
-  *dp++ = ' ';
-  dp = trkFmtFixed(dp, t1000e_get_temperature(), 1, ',');
-  dp += sprintf(dp, "\xC2\xB0" "C");   // °C
+    w[0] = ' ';
+    q = trkFmtFixed(w + 1, t1000e_get_temperature(), 1, ',');
+    sprintf(q, "\xC2\xB0" "C");   // °C
+    add(w);
 #endif
-  if (_fix) dp += sprintf(dp, " %ldsat", _sats);
+    if (_fix) { sprintf(w, " %ldsat", _sats); add(w); }
+  }
+  if (_batt_warned == 2) add(" bateria!");
   if (_fix && _speed_x10 >= 0) {
-    dp += sprintf(dp, " %ld,%ldkm/h", _speed_x10 / 10, _speed_x10 % 10);
-    if (_course >= 0 && _speed_x10 >= 20) dp += sprintf(dp, " k%d", _course);   // course is noise when slow
+    sprintf(w, " %ld,%ldkm/h", _speed_x10 / 10, _speed_x10 % 10); add(w);
+    if (_course >= 0 && _speed_x10 >= 20) { sprintf(w, " k%d", _course); add(w); }   // course is noise when slow
   }
-  if (_accel.activity() >= 0) dp += sprintf(dp, " a%d", _accel.activity());
-  if (_batt_warned == 2) dp += sprintf(dp, " bateria!");
-  dp += sprintf(dp, " nr%lu", (unsigned long)_seq);
-  if (_have_pos) {
-    if (!_fix) dp += sprintf(dp, " ost.");
-    dp += sprintf(dp, " https://maps.google.com/?q=");
-    double la = _fix ? _lat : _anchor_lat, lo = _fix ? _lon : _anchor_lon;
-    dp = trkFmtFixed(dp, la, 5); *dp++ = ',';
-    dp = trkFmtFixed(dp, lo, 5);
+  if (_accel.activity() >= 0) { sprintf(w, " a%d", _accel.activity()); add(w); }
+  if (_fix && _hdop_x10 >= 0) { sprintf(w, " hdop%d,%d", _hdop_x10 / 10, _hdop_x10 % 10); add(w); }
+  switch (_accel.posture()) {
+    case TRK_POS_UPRIGHT: add(" pion"); break;
+    case TRK_POS_SIDE:    add(" bok"); break;
+    case TRK_POS_BACK:    add(" grzbiet"); break;
+    default: break;
   }
-  *dp = 0;
+  unsigned long still_min = _accel.stillMs() / 60000UL;
+  if (_accel.ok() && still_min >= 1) { sprintf(w, " bz%lu", still_min); add(w); }
+  strcpy(dp, tail);
 }
 
 // the routed copy first (the repeater must not have seen the zero-hop one), the zero-hop copy after it
@@ -445,6 +537,7 @@ bool TrackerMode::loop() {
         _radio_asleep = true;
       }
       _accel.poll();
+      checkAlarms();
       // standing still and the accelerometer feels sustained motion: do not wait out the long interval
       if (!_moving && !_sos_until && _batt_warned < 2 && _accel.movingNow() && timeReached(_accel_wake_ok)
           && (long)(_next_wake - millis()) > 10000L) {
@@ -476,6 +569,7 @@ bool TrackerMode::loop() {
         _lat = lp->getLatitude() / 1000000.0;
         _lon = lp->getLongitude() / 1000000.0;
         _sats = lp->satellitesCount();
+        _hdop_x10 = lp->getHdopX10();
         long kn = lp->getSpeedMilliKnots(), crs = lp->getCourseMilliDeg();
         _speed_x10 = kn >= 0 ? (kn * 1852L + 50000L) / 100000L : -1;   // 1 knot = 1.852 km/h
         _course = crs >= 0 ? (int)((crs + 500) / 1000) % 360 : -1;
@@ -485,7 +579,8 @@ bool TrackerMode::loop() {
       }
       if (_fix || timeReached(_deadline)) {
         updateMotion();
-        if (_moving) _asleep = false;
+        // nap only at home (or anywhere when home is not set): away, a still dog may be in trouble
+        if (_moving || awayFromHome()) _asleep = false;
         else if (_cfg.nap_min && millis() - _last_move >= (unsigned long)_cfg.nap_min * 60000UL) _asleep = true;
         radio_driver.wakeRadio();
         _radio_asleep = false;
@@ -495,7 +590,8 @@ bool TrackerMode::loop() {
         _sent_before = the_mesh.getNumSentDirect();
         _air_before = the_mesh.getTotalAirTime();
         _to_send = sendReport();
-        _boot_report = _ok_pending = false;
+        _boot_report = _ok_pending = _idle_pending = false;
+        _impact = TRK_IMP_NONE;
         _send_done = millis();
         _state = ST_SEND;
       } else {
